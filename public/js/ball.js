@@ -113,9 +113,15 @@ export class BallSkin {
     this.lastY = y;
   }
 
-  draw(ctx, x, y, R) {
+  // stretchAngle/sx/sy squash and stretch the ball along a direction for a cartoon feel.
+  draw(ctx, x, y, R, stretchAngle = 0, sx = 1, sy = 1) {
     ctx.save();
     ctx.translate(x, y);
+    if (sx !== 1 || sy !== 1) {
+      ctx.rotate(stretchAngle);
+      ctx.scale(sx, sy);
+      ctx.rotate(-stretchAngle);
+    }
 
     const base = ctx.createRadialGradient(-R * 0.35, -R * 0.35, R * 0.1, 0, 0, R);
     base.addColorStop(0, '#ffffff');

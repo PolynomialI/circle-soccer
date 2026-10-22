@@ -1,6 +1,5 @@
 :root {
   --bg: #0d1b14;
-  --bg2: #143323;
   --card: rgba(255, 255, 255, 0.06);
   --line: rgba(255, 255, 255, 0.12);
   --text: #eef5ef;
@@ -8,10 +7,6 @@
   --accent: #ffd447;
   --red: #ef4b4b;
   --blue: #3d8bff;
-  --speed: #4fd1ff;
-  --mega: #ff8a3d;
-  --giant: #b77bff;
-  --energy: #59e07a;
 }
 
 * { box-sizing: border-box; }
@@ -22,7 +17,7 @@ html, body {
   overflow: hidden;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: var(--text);
-  background: radial-gradient(ellipse at top, var(--bg2), var(--bg) 70%);
+  background: var(--bg);
 }
 
 #game {
@@ -66,8 +61,6 @@ html, body {
 .dot.red { background: var(--red); }
 .dot.blue { background: var(--blue); }
 
-.tagline { margin: 0 0 6px; color: var(--muted); }
-
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -108,17 +101,6 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 .muted { color: var(--muted); font-size: 14px; text-align: center; max-width: 520px; }
 .big { font-size: 22px; font-weight: 700; margin: 0; }
 .code { font-family: ui-monospace, monospace; letter-spacing: 4px; color: var(--accent); }
-.key {
-  display: inline-block;
-  min-width: 1.6em;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.1);
-  font-family: ui-monospace, monospace;
-  font-size: 0.9em;
-  text-align: center;
-}
 
 .spinner {
   width: 46px;
@@ -168,20 +150,12 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 .panel h3 { margin: 18px 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
 .panel .row { margin-top: 14px; }
 
-#binds, #help-keys { width: 100%; border-collapse: collapse; }
-#binds td, #help-keys td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
-#binds td:last-child, #help-keys td:last-child { text-align: right; }
+#binds { width: 100%; border-collapse: collapse; }
+#binds td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
+#binds td:last-child { text-align: right; }
 #binds button { min-width: 110px; padding: 6px 10px; font-family: ui-monospace, monospace; }
 #binds button.listening { background: var(--accent); color: #1d1a08; }
 #volume { padding: 0; width: 180px; }
-
-.tips { padding-left: 18px; line-height: 1.5; color: #d6e4d9; }
-.tips li { margin-bottom: 6px; }
-.pu { padding: 1px 7px; border-radius: 10px; font-size: 13px; font-weight: 700; color: #111; }
-.pu.speed { background: var(--speed); }
-.pu.mega { background: var(--mega); }
-.pu.giant { background: var(--giant); }
-.pu.energy { background: var(--energy); }
 
 .score { font-size: 40px; font-weight: 800; text-align: center; margin: 4px 0 10px; }
 .score .r { color: var(--red); }

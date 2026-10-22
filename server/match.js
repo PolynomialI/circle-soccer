@@ -1,5 +1,5 @@
 import {
-  TICK_RATE, DT, SUBSTEPS, MODES, FORMATIONS, MATCH, FIELD, PLAYER, BALL, KICK, DASH, TACKLE, POWERUP,
+  TICK_RATE, DT, SUBSTEPS, MODES, FORMATIONS, MATCH, FIELD, PLAYER, POSSESSION, BALL, KICK, DASH, TACKLE, POWERUP,
 } from './config.js';
 import {
   len, normalize, clamp, collideCircles, collideSegment, confineToBox,
@@ -40,6 +40,7 @@ export class Match {
     this.ball = {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, spin: 0,
       r: BALL.radius, m: BALL.mass, ignoreId: null, ignoreTimer: 0,
+      ownerId: null, protect: 0,
     };
     this.score = [0, 0];
     this.clock = MATCH.duration;
@@ -102,7 +103,7 @@ export class Match {
       charging: null, charge: 0, pendingKick: null,
       wantPass: false, wantDash: false, wantTackle: false,
       state: 'normal', stateTimer: 0, dirX: 0, dirY: 0,
-      immunity: 0, kickCooldown: 0,
+      immunity: 0, kickCooldown: 0, pickupCooldown: 0, holdAngle: 0,
       stamina: PLAYER.staminaMax, staminaDelay: 0,
       effects: { speed: 0, mega: 0, giant: 0, energy: 0 },
       goals: 0,
@@ -114,6 +115,7 @@ export class Match {
     const p = this.players.get(id);
     if (!p) return;
     this.players.delete(id);
+    if (this.ball.ownerId === id) this.ball.ownerId = null;
     if (this.state === 'ended') return;
     const counts = this.teamCounts();
     if (counts[0] === 0 && counts[1] === 0) this.endMatch(-1, true);
@@ -128,7 +130,9 @@ export class Match {
 
   resetPositions() {
     const b = this.ball;
-    Object.assign(b, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, ignoreId: null, ignoreTimer: 0 });
+    Object.assign(b, {
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, ignoreId: null, ignoreTimer: 0, ownerId: null, protect: 0,
+    });
     const formation = FORMATIONS[this.teamSize];
     for (const team of [0, 1]) {
       const side = team === 0 ? -1 : 1;
@@ -143,7 +147,7 @@ export class Match {
         }
         Object.assign(p, {
           vx: 0, vy: 0, aimX: -side, aimY: 0, state: 'normal', stateTimer: 0,
-          charging: null, charge: 0, pendingKick: null,
+          charging: null, charge: 0, pendingKick: null, pickupCooldown: 0,
           wantPass: false, wantDash: false, wantTackle: false,
         });
       });
@@ -257,7 +261,7 @@ export class Match {
       this.updatePowerups();
     }
     this.updateBallForces();
-    this.integrate();
+    this.integrate(live);
     if (live) this.checkGoal();
   }
 
@@ -269,6 +273,7 @@ export class Match {
     p.r = PLAYER.radius * (giant ? POWERUP.types.giant.radiusMul : 1);
     p.m = PLAYER.mass * (giant ? POWERUP.types.giant.massMul : 1) * (p.state === 'dash' ? DASH.massMul : 1);
     p.kickCooldown = Math.max(0, p.kickCooldown - DT);
+    p.pickupCooldown = Math.max(0, p.pickupCooldown - DT);
     p.immunity = Math.max(0, p.immunity - DT);
 
     if (p.effects.energy > 0) p.stamina = PLAYER.staminaMax;
@@ -335,7 +340,8 @@ export class Match {
       }
     }
 
-    if (canMove) {
+    // Re-check: a dash or slide that started this tick must keep its burst speed.
+    if (p.state === 'normal' || p.state === 'recover') {
       let speed = PLAYER.maxSpeed;
       if (p.effects.speed > 0) speed *= POWERUP.types.speed.speedMul;
       if (p.charging) speed *= PLAYER.chargingSpeedMul;
@@ -348,6 +354,14 @@ export class Match {
       const f = Math.exp((p.state === 'stunned' ? -5 : -1.5) * DT);
       p.vx *= f;
       p.vy *= f;
+    }
+
+    // A carried ball swings smoothly round to wherever the carrier aims.
+    if (this.ball.ownerId === p.id) {
+      let diff = Math.atan2(p.aimY, p.aimX) - p.holdAngle;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      const maxTurn = POSSESSION.turnRate * DT;
+      p.holdAngle += clamp(diff, -maxTurn, maxTurn);
     }
   }
 
@@ -377,6 +391,7 @@ export class Match {
 
   canReachBall(p) {
     const b = this.ball;
+    if (b.ownerId) return b.ownerId === p.id;
     if (b.z >= PLAYER.height) return false;
     const dx = b.x - p.x;
     const dy = b.y - p.y;
@@ -416,11 +431,12 @@ export class Match {
         const dx = target.x - b.x;
         const dy = target.y - b.y;
         const d = len(dx, dy);
-        const lead = d / 600; // rough flight time, used to lead a moving teammate
+        const lead = d / 700; // rough flight time, used to lead a moving teammate
         const d2 = normalize(dx + target.vx * lead * 0.8, dy + target.vy * lead * 0.8);
         dirX = d2.x;
         dirY = d2.y;
-        power = clamp(d * 1.05 + 220, KICK.passMin, KICK.passMax);
+        // Enough to arrive slow enough for the teammate to collect it.
+        power = clamp(d * 0.8 + 300, KICK.passMin, KICK.passMax);
       } else {
         power = KICK.passSolo;
       }
@@ -434,10 +450,12 @@ export class Match {
         power *= KICK.lobPowerMul;
         b.vz = lerp(KICK.lobLiftMin, KICK.lobLiftMax, k.charge);
       } else {
-        b.vz = Math.min(b.vz, 0);
+        b.vz = KICK.shotHopMax * k.charge;
       }
     }
 
+    b.ownerId = null;
+    p.pickupCooldown = POSSESSION.regrabDelay;
     b.vx = dirX * power;
     b.vy = dirY * power;
     b.spin = spin;
@@ -483,6 +501,128 @@ export class Match {
     victim.vx += attacker.dirX * TACKLE.knock;
     victim.vy += attacker.dirY * TACKLE.knock;
     this.emit({ k: 'tackle', p: attacker.idx, v: victim.idx });
+    if (this.ball.ownerId === victim.id) this.knockLoose(victim, attacker);
+  }
+
+  // ---- possession -------------------------------------------------------------
+
+  canGrab(p) {
+    return p.pickupCooldown <= 0 && p.state !== 'stunned' && p.state !== 'slide';
+  }
+
+  takeBall(p, from) {
+    const b = this.ball;
+    b.ownerId = p.id;
+    b.z = 0;
+    b.vz = 0;
+    b.spin = 0;
+    b.ignoreId = null;
+    p.holdAngle = Math.atan2(b.y - p.y, b.x - p.x);
+    this.touch(p);
+    if (from) {
+      b.protect = POSSESSION.stealProtect;
+      from.pickupCooldown = POSSESSION.loseDelay;
+      this.emit({ k: 'steal', p: p.idx, v: from.idx });
+    } else {
+      this.emit({ k: 'grab', p: p.idx });
+    }
+  }
+
+  // A slide tackle pops the ball off its carrier in the direction of the slide.
+  knockLoose(carrier, slider) {
+    const b = this.ball;
+    b.ownerId = null;
+    b.vx = slider.dirX * TACKLE.ballPoke + carrier.vx * 0.3;
+    b.vy = slider.dirY * TACKLE.ballPoke + carrier.vy * 0.3;
+    b.vz = 180;
+    b.ignoreId = slider.id;
+    b.ignoreTimer = 0.15;
+    carrier.pickupCooldown = POSSESSION.loseDelay;
+    this.touch(slider);
+    this.emit({ k: 'kick', p: slider.idx, t: 'poke', pw: 0.5 });
+  }
+
+  // Moves the carried ball to the spot in front of its carrier. It sweeps out from the
+  // carrier's centre in small steps so walls stop it instead of it popping through.
+  carryBall(p) {
+    const b = this.ball;
+    const dist = p.r + b.r + POSSESSION.holdGap;
+    const steps = 4;
+    const dx = (Math.cos(p.holdAngle) * dist) / steps;
+    const dy = (Math.sin(p.holdAngle) * dist) / steps;
+    b.x = p.x;
+    b.y = p.y;
+    b.vx = 0;
+    b.vy = 0;
+    for (let i = 0; i < steps; i++) {
+      b.x += dx;
+      b.y += dy;
+      this.ballVsStatic(false);
+    }
+    b.vx = p.vx;
+    b.vy = p.vy;
+    b.z = 0;
+    b.vz = 0;
+    b.spin = 0;
+  }
+
+  ballVsPlayers(players, live) {
+    const b = this.ball;
+    const carrier = b.ownerId ? this.players.get(b.ownerId) : null;
+    for (const p of players) {
+      if (p === carrier || p.id === b.ignoreId) continue;
+      const touching = len(b.x - p.x, b.y - p.y) <= p.r + b.r + POSSESSION.pickupSlack;
+      if (carrier) {
+        // Opponents take a carried ball by running into it; teammates pass through it.
+        if (!live || !touching || p.team === carrier.team || p.state === 'stunned') continue;
+        if (p.state === 'slide') {
+          this.knockLoose(carrier, p);
+          return;
+        }
+        if (b.protect <= 0 && p.pickupCooldown <= 0) {
+          this.takeBall(p, carrier);
+          return;
+        }
+        continue;
+      }
+      if (live && touching && this.canGrab(p) && len(b.vx, b.vy) < POSSESSION.catchSpeed) {
+        this.takeBall(p, null);
+        return;
+      }
+      if (collideCircles(p, b, BALL.playerBounce) > 0) {
+        this.touch(p);
+        if (p.state === 'slide') {
+          const d = normalize(b.x - p.x + p.dirX * b.r, b.y - p.y + p.dirY * b.r);
+          b.vx = d.x * TACKLE.ballPoke;
+          b.vy = d.y * TACKLE.ballPoke;
+          b.spin = 0;
+          b.ignoreId = p.id;
+          b.ignoreTimer = 0.12;
+          this.emit({ k: 'kick', p: p.idx, t: 'poke', pw: 0.5 });
+        }
+      }
+    }
+  }
+
+  ballVsStatic(events) {
+    const b = this.ball;
+    if (b.z < FIELD.crossbarHeight) {
+      for (const post of this.posts) {
+        const j = collideCircles(post, b, BALL.postBounce);
+        if (events && j > 150) this.emit({ k: 'post', s: r2(Math.min(1, j / 1000)) });
+      }
+    }
+    for (const net of this.nets) collideSegment(b, net, 0.25);
+    for (const wall of this.ballWalls) {
+      const v = collideSegment(b, wall, BALL.wallBounce);
+      if (events && v > 150) this.emit({ k: 'wall', s: r2(Math.min(1, v / 1000)) });
+    }
+    if (b.z >= FIELD.crossbarHeight) {
+      for (const bar of this.crossbars) {
+        const v = collideSegment(b, bar, BALL.wallBounce);
+        if (events && v > 150) this.emit({ k: 'post', s: r2(Math.min(1, v / 1000)) });
+      }
+    }
   }
 
   // ---- power-ups -------------------------------------------------------------
@@ -530,6 +670,8 @@ export class Match {
       b.ignoreTimer -= DT;
       if (b.ignoreTimer <= 0) b.ignoreId = null;
     }
+    b.protect = Math.max(0, b.protect - DT);
+    if (b.ownerId) return; // carried: position comes from the carrier
 
     // Spin rotates the velocity vector (Magnus effect), so curving keeps the speed.
     if (b.spin !== 0) {
@@ -584,7 +726,7 @@ export class Match {
     }
   }
 
-  integrate() {
+  integrate(live) {
     const b = this.ball;
     const players = [...this.players.values()];
     const h = DT / SUBSTEPS;
@@ -595,8 +737,10 @@ export class Match {
         p.x += p.vx * h;
         p.y += p.vy * h;
       }
-      b.x += b.vx * h;
-      b.y += b.vy * h;
+      if (!b.ownerId) {
+        b.x += b.vx * h;
+        b.y += b.vy * h;
+      }
 
       for (let i = 0; i < players.length; i++) {
         for (let j = i + 1; j < players.length; j++) {
@@ -609,55 +753,22 @@ export class Match {
         }
       }
 
-      if (b.z < PLAYER.height) {
-        for (const p of players) {
-          if (p.id === b.ignoreId) continue;
-          const j = collideCircles(p, b, BALL.playerBounce);
-          if (j > 0) {
-            this.touch(p);
-            if (p.state === 'slide') {
-              const d = normalize(b.x - p.x + p.dirX * b.r, b.y - p.y + p.dirY * b.r);
-              b.vx = d.x * TACKLE.ballPoke;
-              b.vy = d.y * TACKLE.ballPoke;
-              b.spin = 0;
-              b.ignoreId = p.id;
-              b.ignoreTimer = 0.12;
-              this.emit({ k: 'kick', p: p.idx, t: 'poke', pw: 0.5 });
-            }
-          }
-        }
-      }
-
-      for (const post of this.posts) {
-        for (const p of players) collideCircles(post, p, PLAYER.wallBounce);
-        if (b.z < FIELD.crossbarHeight) {
-          const j = collideCircles(post, b, BALL.postBounce);
-          if (j > 150) this.emit({ k: 'post', s: r2(Math.min(1, j / 1000)) });
-        }
-      }
-
-      for (const net of this.nets) {
-        for (const p of players) collideSegment(p, net, PLAYER.wallBounce);
-        collideSegment(b, net, 0.25);
-      }
+      // Players stay on the pitch (and may step into the goal mouths).
       for (const p of players) {
+        for (const post of this.posts) collideCircles(post, p, PLAYER.wallBounce);
+        for (const wall of this.ballWalls) collideSegment(p, wall, PLAYER.wallBounce);
+        for (const net of this.nets) collideSegment(p, net, PLAYER.wallBounce);
         confineToBox(p, -this.hw - m, -this.hh - m, this.hw + m, this.hh + m, PLAYER.wallBounce);
       }
 
-      for (const wall of this.ballWalls) {
-        const v = collideSegment(b, wall, BALL.wallBounce);
-        if (v > 150) this.emit({ k: 'wall', s: r2(Math.min(1, v / 1000)) });
-      }
-      if (b.z >= FIELD.crossbarHeight) {
-        for (const bar of this.crossbars) {
-          const v = collideSegment(b, bar, BALL.wallBounce);
-          if (v > 150) this.emit({ k: 'post', s: r2(Math.min(1, v / 1000)) });
-        }
-      }
+      const carrier = b.ownerId ? this.players.get(b.ownerId) : null;
+      if (carrier) this.carryBall(carrier);
+      if (b.z < PLAYER.height) this.ballVsPlayers(players, live);
+      if (!b.ownerId) this.ballVsStatic(true);
     }
 
     if (!Number.isFinite(b.x) || !Number.isFinite(b.y) || !Number.isFinite(b.z)) {
-      Object.assign(b, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, spin: 0 });
+      Object.assign(b, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, ownerId: null });
     }
   }
 
@@ -689,6 +800,7 @@ export class Match {
     this.state = 'goal';
     this.stateTimer = MATCH.goalPause;
     this.kickoffTeam = 1 - team;
+    this.ball.ownerId = null;
     for (const p of this.players.values()) {
       p.charging = null;
       p.charge = 0;
@@ -734,6 +846,11 @@ export class Match {
     };
   }
 
+  ownerIdx() {
+    const owner = this.ball.ownerId ? this.players.get(this.ball.ownerId) : null;
+    return owner ? owner.idx : -1;
+  }
+
   roster() {
     return [...this.players.values()].map((p) => ({
       idx: p.idx, id: p.id, name: p.name, team: p.team, num: p.num,
@@ -749,7 +866,7 @@ export class Match {
       clk: r1(this.clock),
       ot: this.overtime ? 1 : 0,
       sc: this.score,
-      b: [r1(b.x), r1(b.y), r1(b.z), r1(b.vx), r1(b.vy), r2(b.spin)],
+      b: [r1(b.x), r1(b.y), r1(b.z), r1(b.vx), r1(b.vy), r2(b.spin), this.ownerIdx()],
       p: [...this.players.values()].map((p) => [
         p.idx, r1(p.x), r1(p.y), r1(p.vx), r1(p.vy), r2(p.aimX), r2(p.aimY), r1(p.r),
         p.charging ? CHARGE_CODE[p.charging] : 0, r2(p.charge),

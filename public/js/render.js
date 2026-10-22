@@ -7,6 +7,8 @@ export const TEAMS = [
 const PU_COLORS = { speed: '#4fd1ff', mega: '#ff8a3d', giant: '#b77bff', energy: '#59e07a' };
 const PU_NAMES = { speed: 'Speed', mega: 'Mega kick', giant: 'Giant', energy: 'Endless stamina' };
 const HUD_H = 64;
+const VIEW_W = 1200; // world units visible across (camera zoom is picked so this fits)
+const VIEW_H = 700; // ...and down
 const STATE = { normal: 0, dash: 1, slide: 2, recover: 3, stunned: 4 };
 
 export class Renderer {
@@ -14,23 +16,21 @@ export class Renderer {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.init = null;
-    this.ballSkin = new BallSkin();
-    this.particles = [];
-    this.floaters = [];
-    this.banners = [];
-    this.shake = 0;
+    this.setMatch(null);
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
 
   setMatch(init) {
     this.init = init;
-    this.pitchCache = null;
     this.ballSkin = new BallSkin();
     this.particles = [];
     this.floaters = [];
     this.banners = [];
     this.shake = 0;
+    this.cam = null;
+    this.squash = 0;
+    this.trail = [];
   }
 
   resize() {
@@ -39,71 +39,77 @@ export class Renderer {
     this.h = window.innerHeight;
     this.canvas.width = Math.round(this.w * this.dpr);
     this.canvas.height = Math.round(this.h * this.dpr);
-    this.pitchCache = null;
   }
 
-  layout() {
+  // Camera follows our own player (or the ball when spectating), clamped to the arena.
+  updateCamera(view, info, dt) {
     const f = this.init.field;
-    this.worldW = f.width + 2 * (f.goalDepth + 25);
-    this.worldH = f.height + 2 * (f.playerMargin + 6);
-    this.scale = Math.min(this.w / this.worldW, (this.h - HUD_H - 8) / this.worldH);
-    this.cx = this.w / 2;
-    this.cy = HUD_H + (this.h - HUD_H) / 2;
+    this.zoom = Math.min(this.w / VIEW_W, this.h / VIEW_H);
+    const me = view.players.find((p) => p.idx === info.me);
+    const target = me || view.ball;
+    if (!this.cam) this.cam = { x: target.x, y: target.y };
+    const k = 1 - Math.exp(-10 * dt);
+    this.cam.x += (target.x - this.cam.x) * k;
+    this.cam.y += (target.y - this.cam.y) * k;
+
+    const halfW = this.w / 2 / this.zoom;
+    const halfH = this.h / 2 / this.zoom;
+    const minX = -f.width / 2 - f.goalDepth - 30;
+    const maxX = -minX;
+    const minY = -f.height / 2 - 30 - HUD_H / this.zoom; // keep the top line clear of the scoreboard
+    const maxY = f.height / 2 + 30;
+    this.cam.x = maxX - minX <= halfW * 2 ? (minX + maxX) / 2 : Math.min(maxX - halfW, Math.max(minX + halfW, this.cam.x));
+    this.cam.y = maxY - minY <= halfH * 2 ? (minY + maxY) / 2 : Math.min(maxY - halfH, Math.max(minY + halfH, this.cam.y));
   }
 
-  // ---- static pitch (flat colours, cached) ---------------------------------------
+  // ---- pitch (flat colours) -------------------------------------------------------
 
-  buildPitch() {
+  drawPitch() {
+    const g = this.ctx;
     const f = this.init.field;
-    const c = document.createElement('canvas');
-    const s = this.scale * this.dpr;
-    c.width = Math.ceil(this.worldW * s);
-    c.height = Math.ceil(this.worldH * s);
-    const g = c.getContext('2d');
-    g.setTransform(s, 0, 0, s, c.width / 2, c.height / 2);
-
     const hw = f.width / 2;
     const hh = f.height / 2;
     const gw = f.goalWidth / 2;
+    const pad = 30;
 
-    g.fillStyle = '#2b7a3a';
-    roundRect(g, -this.worldW / 2, -this.worldH / 2, this.worldW, this.worldH, 18);
+    g.fillStyle = '#23662f';
+    roundRect(g, -hw - f.goalDepth - pad, -hh - pad, f.width + 2 * (f.goalDepth + pad), f.height + 2 * pad, 24);
     g.fill();
 
-    const bands = 12;
+    const bands = 16;
     for (let i = 0; i < bands; i++) {
-      g.fillStyle = i % 2 ? '#3a984a' : '#41a352';
+      g.fillStyle = i % 2 ? '#2f803a' : '#338a3f';
       g.fillRect(-hw + (f.width / bands) * i, -hh, f.width / bands + 0.5, f.height);
     }
 
-    g.strokeStyle = 'rgba(255,255,255,0.85)';
+    g.strokeStyle = 'rgba(255,255,255,0.8)';
+    g.fillStyle = 'rgba(255,255,255,0.8)';
     g.lineWidth = 3;
     g.strokeRect(-hw, -hh, f.width, f.height);
     g.beginPath();
     g.moveTo(0, -hh);
     g.lineTo(0, hh);
     g.stroke();
-    const cr = Math.min(85, f.height * 0.16);
     g.beginPath();
-    g.arc(0, 0, cr, 0, Math.PI * 2);
+    g.arc(0, 0, Math.min(140, f.height * 0.13), 0, Math.PI * 2);
     g.stroke();
-    g.fillStyle = 'rgba(255,255,255,0.85)';
     g.beginPath();
     g.arc(0, 0, 4, 0, Math.PI * 2);
     g.fill();
 
     for (const side of [-1, 1]) {
-      const boxD = f.width * 0.13;
-      const boxH = gw + f.height * 0.17;
+      const boxD = f.width * 0.12;
+      const boxH = gw + f.height * 0.15;
       g.strokeRect(side < 0 ? -hw : hw - boxD, -boxH, boxD, boxH * 2);
-      const smallD = f.width * 0.045;
-      g.strokeRect(side < 0 ? -hw : hw - smallD, -(gw + 20), smallD, (gw + 20) * 2);
+      const smallD = f.width * 0.04;
+      g.strokeRect(side < 0 ? -hw : hw - smallD, -(gw + 25), smallD, (gw + 25) * 2);
       g.beginPath();
-      g.arc(side * (hw - f.width * 0.1), 0, 3.5, 0, Math.PI * 2);
+      g.arc(side * (hw - f.width * 0.09), 0, 3.5, 0, Math.PI * 2);
       g.fill();
       for (const sy of [-1, 1]) {
+        const start = sy < 0 ? (side < 0 ? 0 : Math.PI / 2) : (side < 0 ? -Math.PI / 2 : Math.PI);
         g.beginPath();
-        g.arc(side * hw, sy * hh, 14, sy < 0 ? (side < 0 ? 0 : Math.PI / 2) : (side < 0 ? -Math.PI / 2 : Math.PI), sy < 0 ? (side < 0 ? Math.PI / 2 : Math.PI) : (side < 0 ? 0 : -Math.PI / 2), false);
+        g.arc(side * hw, sy * hh, 14, start, start + Math.PI / 2);
         g.stroke();
       }
     }
@@ -112,9 +118,9 @@ export class Renderer {
     for (const side of [-1, 1]) {
       const team = side < 0 ? TEAMS[0] : TEAMS[1];
       const x0 = side < 0 ? -hw - f.goalDepth : hw;
-      g.fillStyle = 'rgba(15, 25, 20, 0.55)';
+      g.fillStyle = '#1a2a20';
       g.fillRect(x0, -gw, f.goalDepth, gw * 2);
-      g.fillStyle = hexAlpha(team.main, 0.22);
+      g.fillStyle = hexAlpha(team.main, 0.25);
       g.fillRect(x0, -gw, f.goalDepth, gw * 2);
       g.strokeStyle = 'rgba(255,255,255,0.75)';
       g.lineWidth = 3;
@@ -134,45 +140,40 @@ export class Renderer {
         g.stroke();
       }
     }
-    this.pitchCache = c;
   }
 
   // ---- per-frame drawing ------------------------------------------------------------
 
-  draw(view, ctxInfo, dt) {
+  draw(view, info, dt) {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.fillStyle = '#122a1b';
+    ctx.fillStyle = '#10241a';
     ctx.fillRect(0, 0, this.w, this.h);
     if (!this.init || !view) return;
-    this.layout();
-    if (!this.pitchCache) this.buildPitch();
+    this.updateCamera(view, info, dt);
 
     this.shake = Math.max(0, this.shake - dt * 30);
     const sx = (Math.random() * 2 - 1) * this.shake;
     const sy = (Math.random() * 2 - 1) * this.shake;
-
-    const s = this.scale;
-    ctx.drawImage(
-      this.pitchCache,
-      this.cx - (this.worldW * s) / 2 + sx,
-      this.cy - (this.worldH * s) / 2 + sy,
-      this.worldW * s,
-      this.worldH * s,
+    const z = this.zoom;
+    ctx.setTransform(
+      this.dpr * z, 0, 0, this.dpr * z,
+      this.dpr * (this.w / 2 - this.cam.x * z + sx),
+      this.dpr * (this.h / 2 - this.cam.y * z + sy),
     );
-    ctx.setTransform(this.dpr * s, 0, 0, this.dpr * s, this.dpr * (this.cx + sx), this.dpr * (this.cy + sy));
 
     const now = performance.now() / 1000;
+    this.drawPitch();
     for (const pu of view.powerups) this.drawPowerup(pu, now);
     this.drawBallShadow(view.ball);
-    for (const p of view.players) this.drawPlayerBase(p, ctxInfo, now);
+    for (const p of view.players) this.drawPlayerBase(p, info, now);
     this.drawBall(view.ball, dt);
-    for (const p of view.players) this.drawPlayerOverlay(p, ctxInfo, view.ball, now);
+    for (const p of view.players) this.drawPlayerOverlay(p, info, view.ball, now);
     this.updateParticles(dt);
     this.drawFloaters(now);
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawHud(view, ctxInfo, now);
+    this.drawHud(view, info, now);
   }
 
   drawPowerup(pu, now) {
@@ -258,44 +259,38 @@ export class Renderer {
     const fx = p.fx;
     if (fx) {
       const glowColor = fx[1] > 0 ? PU_COLORS.mega : fx[0] > 0 ? PU_COLORS.speed : fx[3] > 0 ? PU_COLORS.energy : PU_COLORS.giant;
-      const g = ctx.createRadialGradient(p.x, p.y, p.r * 0.8, p.x, p.y, p.r * 1.7);
-      g.addColorStop(0, hexAlpha(glowColor, 0.55 + Math.sin(now * 8) * 0.15));
-      g.addColorStop(1, hexAlpha(glowColor, 0));
-      ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r * 1.7, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, p.r + 6, 0, Math.PI * 2);
+      ctx.fillStyle = hexAlpha(glowColor, 0.35 + Math.sin(now * 8) * 0.12);
       ctx.fill();
     }
 
     ctx.beginPath();
-    ctx.ellipse(p.x + 3, p.y + 4, p.r, p.r * 0.92, 0, 0, Math.PI * 2);
+    ctx.ellipse(p.x + 2, p.y + 3, p.r, p.r * 0.92, 0, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.fill();
 
-    const body = ctx.createRadialGradient(p.x - p.r * 0.35, p.y - p.r * 0.4, p.r * 0.1, p.x, p.y, p.r);
-    body.addColorStop(0, team.light);
-    body.addColorStop(1, p.state === STATE.stunned ? team.dark : team.main);
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-    ctx.fillStyle = body;
+    ctx.fillStyle = p.state === STATE.stunned ? team.dark : team.main;
     ctx.fill();
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2;
     ctx.strokeStyle = team.dark;
     ctx.stroke();
 
     if (p.idx === info.me) {
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r + 3.5, 0, Math.PI * 2);
-      ctx.lineWidth = 2.5;
+      ctx.arc(p.x, p.y, p.r + 3, 0, Math.PI * 2);
+      ctx.lineWidth = 2;
       ctx.strokeStyle = '#ffffff';
       ctx.stroke();
     }
 
-    ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    ctx.font = `700 ${Math.round(p.r * 0.85)}px system-ui, sans-serif`;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `800 ${Math.round(p.r * 1.05)}px system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(r.num), p.x, p.y + 1);
+    ctx.fillText((Array.from(r.name)[0] || '?').toUpperCase(), p.x, p.y + 1);
   }
 
   drawPlayerOverlay(p, info, ball, now) {
@@ -316,17 +311,17 @@ export class Renderer {
       charge = info.localCharge ? info.localCharge.value : 0;
     }
 
-    // Aim arrow; turns gold when the ball is close enough to kick.
-    const kickable = isMe && this.canKick(p, aimX, aimY, ball);
-    const ar = p.r + 7;
+    // Aim arrow; turns gold when we can kick (we have the ball, or it's at our feet).
+    const kickable = isMe && (ball.owner === p.idx || (ball.owner === -1 && this.canKick(p, aimX, aimY, ball)));
+    const ar = p.r + 5;
     const ax = p.x + aimX * ar;
     const ay = p.y + aimY * ar;
     const px = -aimY;
     const py = aimX;
     ctx.beginPath();
-    ctx.moveTo(ax + aimX * 8, ay + aimY * 8);
-    ctx.lineTo(ax + px * 6, ay + py * 6);
-    ctx.lineTo(ax - px * 6, ay - py * 6);
+    ctx.moveTo(ax + aimX * 6, ay + aimY * 6);
+    ctx.lineTo(ax + px * 4.5, ay + py * 4.5);
+    ctx.lineTo(ax - px * 4.5, ay - py * 4.5);
     ctx.closePath();
     ctx.fillStyle = kickable ? '#ffd447' : isMe ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.45)';
     ctx.fill();
@@ -334,7 +329,7 @@ export class Renderer {
     if (ct) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r + 4, -Math.PI / 2, -Math.PI / 2 + charge * Math.PI * 2);
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 3.5;
       ctx.lineCap = 'round';
       ctx.strokeStyle = ct === 2 ? '#7fe3ff' : `hsl(${50 - charge * 50}, 100%, 55%)`;
       ctx.stroke();
@@ -344,27 +339,27 @@ export class Renderer {
     if (p.state === STATE.stunned) {
       for (let i = 0; i < 3; i++) {
         const a = now * 5 + (i * Math.PI * 2) / 3;
-        star(ctx, p.x + Math.cos(a) * p.r * 0.8, p.y - p.r - 6 + Math.sin(a) * 4, 4, '#ffe066');
+        star(ctx, p.x + Math.cos(a) * p.r * 0.8, p.y - p.r - 5 + Math.sin(a) * 3, 3.5, '#ffe066');
       }
     }
 
     if (isMe) {
-      const w = 36;
+      const w = 30;
       const frac = Math.max(0, Math.min(1, p.stamina / this.init.staminaMax));
-      const y = p.y + p.r + 8;
+      const y = p.y + p.r + 7;
       ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(p.x - w / 2, y, w, 4);
+      ctx.fillRect(p.x - w / 2, y, w, 3.5);
       ctx.fillStyle = frac >= this.init.dashCost / this.init.staminaMax ? '#7cf29a' : '#f2b84b';
-      ctx.fillRect(p.x - w / 2, y, w * frac, 4);
+      ctx.fillRect(p.x - w / 2, y, w * frac, 3.5);
     }
 
-    ctx.font = '600 12px system-ui, sans-serif';
+    ctx.font = '600 11px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillText(r.name, p.x + 1, p.y - p.r - 5);
+    ctx.fillText(r.name, p.x + 1, p.y - p.r - 4);
     ctx.fillStyle = isMe ? '#ffe680' : '#ffffff';
-    ctx.fillText(r.name, p.x, p.y - p.r - 6);
+    ctx.fillText(r.name, p.x, p.y - p.r - 5);
   }
 
   canKick(p, aimX, aimY, ball) {
@@ -386,10 +381,31 @@ export class Renderer {
     ctx.fill();
   }
 
+  // Cartoon ball: speed trail, stretch along its path, squash on every bounce.
   drawBall(b, dt) {
+    const ctx = this.ctx;
     const r = this.init.ballRadius;
+    const R = r * (1 + b.z / 110);
+    const speed = Math.hypot(b.vx, b.vy);
+    const free = b.owner === -1;
+
+    this.trail.push({ x: b.x, y: b.y });
+    if (this.trail.length > 6) this.trail.shift();
+    if (free && speed > 650) {
+      this.trail.forEach((t, i) => {
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, R * (0.4 + i * 0.1), 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${0.05 + i * 0.04})`;
+        ctx.fill();
+      });
+    }
+
+    this.squash = Math.max(0, this.squash - dt / 0.15);
+    const stretch = free ? Math.min(0.3, speed / 4600) : 0;
+    const sq = Math.sin(this.squash * Math.PI) * 0.3;
+    const angle = Math.atan2(b.vy, b.vx);
     this.ballSkin.update(b.x, b.y, r, b.spin, dt);
-    this.ballSkin.draw(this.ctx, b.x, b.y, r * (1 + b.z / 110));
+    this.ballSkin.draw(ctx, b.x, b.y, R, angle, 1 + stretch - sq, 1 - stretch * 0.5 + sq);
   }
 
   // ---- effects --------------------------------------------------------------------
@@ -427,14 +443,14 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = '800 15px system-ui, sans-serif';
+    ctx.font = '800 14px system-ui, sans-serif';
     for (const f of this.floaters) {
       const t = now - f.t0;
       ctx.globalAlpha = Math.max(0, 1 - t / 1.2);
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillText(f.text, f.x + 1, f.y - 30 - t * 30 + 1);
+      ctx.fillText(f.text, f.x + 1, f.y - 26 - t * 30 + 1);
       ctx.fillStyle = f.color;
-      ctx.fillText(f.text, f.x, f.y - 30 - t * 30);
+      ctx.fillText(f.text, f.x, f.y - 26 - t * 30);
     }
     ctx.globalAlpha = 1;
     this.floaters = this.floaters.filter((f) => now - f.t0 < 1.2);
@@ -459,14 +475,26 @@ export class Renderer {
         }
         break;
       }
+      case 'grab':
+        sound.bounce(0.3);
+        break;
+      case 'steal': {
+        sound.whoosh();
+        const p = byIdx(ev.p);
+        if (p) this.floater(p.x, p.y, 'STOLEN!', '#ffe066');
+        break;
+      }
       case 'bounce':
         sound.bounce(ev.s);
+        this.squash = 1;
         break;
       case 'wall':
         sound.wall(ev.s);
+        this.squash = 1;
         break;
       case 'post':
         sound.post(ev.s);
+        this.squash = 1;
         this.shake = Math.max(this.shake, 4);
         break;
       case 'goal': {
@@ -608,7 +636,7 @@ export class Renderer {
     }
 
     // Big centre messages
-    const midY = this.cy;
+    const midY = this.h / 2;
     if (view.st === 'countdown') {
       const n = Math.max(1, Math.ceil(view.tm));
       const frac = view.tm - Math.floor(view.tm);

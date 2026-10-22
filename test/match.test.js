@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Match } from '../server/match.js';
-import { MATCH, DT, PLAYER, TACKLE, MODES, FIELD } from '../server/config.js';
+import { MATCH, DT, PLAYER, TACKLE, MODES, FIELD, POWERUP } from '../server/config.js';
 
 function seeded(seed = 1) {
   return () => {
@@ -32,6 +32,25 @@ function park(m, id, x, y) {
   return p;
 }
 
+// Puts the ball at a player's feet, aimed (and carried) in the given direction.
+function giveBall(m, id, ax = 1, ay = 0) {
+  const p = m.players.get(id);
+  m.handleInput(id, { ax, ay });
+  p.aimX = ax;
+  p.aimY = ay;
+  p.holdAngle = Math.atan2(ay, ax);
+  m.ball.ownerId = id;
+  m.step();
+  return p;
+}
+
+const FOUR = [
+  { id: 'a', name: 'Alice', team: 0 },
+  { id: 'c', name: 'Carol', team: 0 },
+  { id: 'b', name: 'Bob', team: 1 },
+  { id: 'd', name: 'Dan', team: 1 },
+];
+
 test('countdown leads into play with a whistle', () => {
   const m = new Match({ mode: '1v1', players: [{ id: 'a', name: 'A', team: 0 }], rng: seeded() });
   assert.equal(m.state, 'countdown');
@@ -39,11 +58,76 @@ test('countdown leads into play with a whistle', () => {
   assert.equal(m.state, 'playing');
 });
 
-test('a charged shot into the right goal scores for red', () => {
+test('movement reaches near full speed almost instantly', () => {
   const m = newMatch();
-  park(m, 'b', 0, -200);
-  const a = park(m, 'a', m.hw - 150, 0);
-  Object.assign(m.ball, { x: a.x + 31, y: 0, vx: 0, vy: 0 });
+  const a = park(m, 'a', -300, 0);
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 3 * DT);
+  assert.ok(a.vx > PLAYER.maxSpeed * 0.9, `only reached ${a.vx}`);
+});
+
+test('touching a loose ball picks it up and it rides in front of the carrier', () => {
+  const m = newMatch();
+  park(m, 'b', 400, 300);
+  const a = park(m, 'a', -300, 0);
+  Object.assign(m.ball, { x: -270, y: 0, vx: 0, vy: 0 });
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 0.1);
+  assert.equal(m.ball.ownerId, 'a');
+  // Run up and right; the ball stays glued to the front.
+  m.handleInput('a', { mx: 1, my: -1 });
+  stepFor(m, 0.8);
+  const d = Math.hypot(m.ball.x - a.x, m.ball.y - a.y);
+  assert.ok(Math.abs(d - (a.r + m.ball.r + 1)) < 0.5, `ball drifted to ${d}`);
+  const front = ((m.ball.x - a.x) * a.aimX + (m.ball.y - a.y) * a.aimY) / d;
+  assert.ok(front > 0.99, 'ball should sit in the aim direction');
+});
+
+test('the carried ball swings round smoothly when the aim flips', () => {
+  const m = newMatch();
+  park(m, 'b', 400, 300);
+  const a = park(m, 'a', 0, 0);
+  giveBall(m, 'a', 1, 0);
+  m.handleInput('a', { ax: -1, ay: 0 });
+  m.step();
+  assert.ok(m.ball.x > a.x, 'should not teleport through the player');
+  stepFor(m, 0.3);
+  assert.ok(m.ball.x < a.x - 10, 'should end up on the new side');
+});
+
+test('an opponent running into the ball steals it, and cannot lose it straight back', () => {
+  const m = newMatch();
+  const a = park(m, 'a', 0, 0);
+  giveBall(m, 'a', 1, 0);
+  park(m, 'b', 60, 0);
+  m.handleInput('b', { mx: -1, my: 0 });
+  stepFor(m, 0.15);
+  assert.equal(m.ball.ownerId, 'b');
+  assert.ok(m.events.some((e) => e.k === 'steal'));
+  // Alice is right there, but the steal protection keeps it with Bob for a moment.
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 0.3);
+  assert.equal(m.ball.ownerId, 'b');
+  assert.ok(a.pickupCooldown >= 0);
+});
+
+test('teammates run through a carried ball without taking it', () => {
+  const m = newMatch('2v2', FOUR);
+  park(m, 'b', 600, 400);
+  park(m, 'd', 700, 400);
+  park(m, 'a', 0, 0);
+  giveBall(m, 'a', 1, 0);
+  park(m, 'c', 80, 0);
+  m.handleInput('c', { mx: -1, my: 0 });
+  stepFor(m, 0.5);
+  assert.equal(m.ball.ownerId, 'a');
+});
+
+test('a charged shot from possession scores for red', () => {
+  const m = newMatch();
+  park(m, 'b', 0, -300);
+  park(m, 'a', m.hw - 300, 0);
+  giveBall(m, 'a', 1, 0);
   m.handleInput('a', { ax: 1, ay: 0, sh: true });
   stepFor(m, 0.5);
   m.handleInput('a', { ax: 1, ay: 0, sh: false });
@@ -51,12 +135,39 @@ test('a charged shot into the right goal scores for red', () => {
   assert.deepEqual(m.score, [1, 0]);
   assert.equal(m.goals[0].scorer, 'Alice');
   assert.equal(m.state, 'goal');
+  assert.equal(m.ball.ownerId, null);
+});
+
+test('dribbling the ball into the net scores', () => {
+  const m = newMatch();
+  park(m, 'b', 0, -300);
+  park(m, 'a', m.hw - 120, 0);
+  giveBall(m, 'a', 1, 0);
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 1.5);
+  assert.deepEqual(m.score, [1, 0]);
+});
+
+test('hard shots bounce off players, slow balls get collected', () => {
+  const m = newMatch();
+  park(m, 'a', -600, 300);
+  park(m, 'b', 0, 0);
+  Object.assign(m.ball, { x: -200, y: 0, vx: 1300, vy: 0 });
+  stepFor(m, 0.3);
+  assert.equal(m.ball.ownerId, null);
+  assert.ok(m.ball.vx < 0, 'hard shot should rebound');
+
+  Object.assign(m.ball, { x: -200, y: 0, z: 0, vz: 0, vx: 500, vy: 0 });
+  park(m, 'b', 0, 0);
+  m.players.get('b').pickupCooldown = 0;
+  stepFor(m, 0.6);
+  assert.equal(m.ball.ownerId, 'b');
 });
 
 test('ball bounces off the side walls and stays in the pitch', () => {
   const m = newMatch();
-  park(m, 'a', -300, 0);
-  park(m, 'b', 300, 0);
+  park(m, 'a', -500, 0);
+  park(m, 'b', 500, 0);
   Object.assign(m.ball, { x: 0, y: 0, vx: 300, vy: -1500 });
   for (let i = 0; i < 200; i++) {
     m.step();
@@ -68,17 +179,18 @@ test('ball bounces off the side walls and stays in the pitch', () => {
 test('moving sideways while shooting curves the ball towards that side', () => {
   const shoot = (moveY) => {
     const m = newMatch('3v3', [{ id: 'a', name: 'A', team: 0 }, { id: 'b', name: 'B', team: 1 }]);
-    park(m, 'b', 0, 300);
-    const a = park(m, 'a', -400, 0);
+    park(m, 'b', 0, 500);
+    const a = park(m, 'a', -600, 0);
+    giveBall(m, 'a', 1, 0);
     a.vy = moveY * PLAYER.maxSpeed;
-    Object.assign(m.ball, { x: a.x + 31, y: 0, vx: 0, vy: 0 });
+    const startY = m.ball.y;
     m.handleInput('a', { mx: 0, my: moveY, ax: 1, ay: 0, sh: true });
     a.charge = 0.8;
     m.handleInput('a', { mx: 0, my: moveY, ax: 1, ay: 0, sh: false });
     m.step();
     m.handleInput('a', { mx: 0, my: 0, ax: 0, ay: 0 });
     stepFor(m, 0.6);
-    return m.ball.y;
+    return m.ball.y - startY;
   };
   const straight = shoot(0);
   const down = shoot(1);
@@ -88,13 +200,13 @@ test('moving sideways while shooting curves the ball towards that side', () => {
   assert.ok(up < -20, `expected curve up, got ${up}`);
 });
 
-test('a lob flies over a defender, bounces, then rolls to a stop', () => {
-  const m = newMatch();
-  const a = park(m, 'a', -300, 0);
-  const b = park(m, 'b', -150, 0);
-  Object.assign(m.ball, { x: a.x + 31, y: 0 });
+test('a lob flies over a defender, bounces a lot, then settles', () => {
+  const m = newMatch('3v3', [{ id: 'a', name: 'A', team: 0 }, { id: 'b', name: 'B', team: 1 }]);
+  const a = park(m, 'a', -600, 0);
+  const b = park(m, 'b', -450, 0);
+  giveBall(m, 'a', 1, 0);
   m.handleInput('a', { ax: 1, ay: 0, lb: true });
-  stepFor(m, 0.6);
+  stepFor(m, 0.45);
   m.handleInput('a', { ax: 1, ay: 0, lb: false });
   let maxZ = 0;
   let bounces = 0;
@@ -108,49 +220,52 @@ test('a lob flies over a defender, bounces, then rolls to a stop', () => {
   }
   assert.ok(maxZ > PLAYER.height, `lob only reached z=${maxZ}`);
   assert.ok(passedOver, 'lob should clear the defender');
-  assert.ok(bounces >= 2, `expected several bounces, got ${bounces}`);
+  assert.ok(bounces >= 3, `expected several bounces, got ${bounces}`);
   assert.equal(m.ball.z, 0);
-  stepFor(m, 8);
+  stepFor(m, 10);
   assert.equal(Math.hypot(m.ball.vx, m.ball.vy), 0, 'ball should come to rest');
+  assert.ok(a);
 });
 
 test('a high ball hits the crossbar instead of scoring', () => {
   const m = newMatch();
-  park(m, 'a', 0, -200);
-  park(m, 'b', 0, 200);
+  park(m, 'a', 0, -300);
+  park(m, 'b', 0, 300);
   Object.assign(m.ball, { x: m.hw - 60, y: 0, z: FIELD.crossbarHeight + 30, vx: 900, vy: 0, vz: 0 });
   stepFor(m, 0.3);
   assert.deepEqual(m.score, [0, 0]);
   assert.ok(m.ball.vx < 0, 'ball should bounce back off the crossbar');
 });
 
-test('pass picks the teammate in the aim cone', () => {
-  const m = newMatch('2v2', [
-    { id: 'a', name: 'A', team: 0 },
-    { id: 'c', name: 'C', team: 0 },
-    { id: 'b', name: 'B', team: 1 },
-    { id: 'd', name: 'D', team: 1 },
-  ]);
-  const a = park(m, 'a', -200, 0);
-  const c = park(m, 'c', 100, -180);
-  park(m, 'b', 300, 200);
-  park(m, 'd', 400, 200);
-  Object.assign(m.ball, { x: a.x + 31, y: 0 });
-  // Aim straight right; the teammate is ~31 degrees up from that.
+test('pass goes to the teammate in the aim cone, who collects it', () => {
+  const m = newMatch('2v2', FOUR);
+  const a = park(m, 'a', -300, 0);
+  const c = park(m, 'c', 100, -200);
+  park(m, 'b', 300, 400);
+  park(m, 'd', 500, 400);
+  giveBall(m, 'a', 1, 0);
+  const bx = m.ball.x;
+  const by = m.ball.y;
+  // Aim straight right; the teammate is ~27 degrees up from that.
   m.handleInput('a', { ax: 1, ay: 0, ps: 1 });
   m.step();
   const ang = Math.atan2(m.ball.vy, m.ball.vx);
-  const want = Math.atan2(c.y - a.y, c.x - a.x - 31);
+  const want = Math.atan2(c.y - by, c.x - bx);
   assert.ok(Math.abs(ang - want) < 0.1, `pass went ${ang}, wanted about ${want}`);
+  stepFor(m, 2);
+  assert.equal(m.ball.ownerId, 'c');
+  assert.ok(a);
 });
 
-test('slide tackle stuns an opponent, who then gets immunity', () => {
+test('slide tackle stuns the carrier and knocks the ball loose', () => {
   const m = newMatch();
   const a = park(m, 'a', -100, 0);
-  const b = park(m, 'b', -40, 0);
+  const b = park(m, 'b', 0, 0);
+  giveBall(m, 'b', 1, 0);
   m.handleInput('a', { mx: 1, my: 0, tk: 1 });
   stepFor(m, 0.15);
   assert.equal(b.state, 'stunned');
+  assert.notEqual(m.ball.ownerId, 'b');
   assert.ok(a.stamina < PLAYER.staminaMax);
   stepFor(m, TACKLE.stun + 0.05);
   assert.equal(b.state, 'normal');
@@ -177,8 +292,8 @@ test('tied at full time goes to golden goal; next goal ends it', () => {
   m.step();
   assert.equal(m.overtime, true);
   assert.equal(m.state, 'playing');
-  park(m, 'a', 0, -200);
-  park(m, 'b', 0, 200);
+  park(m, 'a', 0, -300);
+  park(m, 'b', 0, 300);
   Object.assign(m.ball, { x: -m.hw + 40, y: 0, vx: -800, vy: 0 });
   m.lastTouch = { id: 'b', team: 1, name: 'Bob' };
   stepFor(m, 0.5);
@@ -196,12 +311,14 @@ test('leaving empties a team and forfeits the match', () => {
   assert.equal(m.result.forfeit, true);
 });
 
-test('power-ups spawn during play and are picked up', () => {
+test('power-ups spawn (rarely, one at a time) and are picked up', () => {
   const m = newMatch();
-  park(m, 'a', -300, 0);
-  park(m, 'b', 300, 0);
-  stepFor(m, 17);
-  assert.ok(m.powerups.length > 0, 'expected a power-up on the field');
+  park(m, 'a', -500, 0);
+  park(m, 'b', 500, 0);
+  stepFor(m, POWERUP.spawnMin - 1);
+  assert.equal(m.powerups.length, 0, 'nothing should spawn this early');
+  stepFor(m, POWERUP.spawnMax - POWERUP.spawnMin + 2);
+  assert.equal(m.powerups.length, 1);
   const pu = m.powerups[0];
   const a = park(m, 'a', pu.x, pu.y);
   m.step();
@@ -235,8 +352,8 @@ test('random chaos keeps everything finite and inside the arena', () => {
       assert.ok(Math.abs(b.y) <= m.hh + 1, `${mode}: ball y out ${b.y}`);
       assert.ok(Math.abs(b.x) <= m.hw + FIELD.goalDepth + 1, `${mode}: ball x out ${b.x}`);
       for (const p of m.players.values()) {
-        assert.ok(Math.abs(p.x) <= m.hw + FIELD.playerMargin + 0.5, `${mode}: player x out ${p.x}`);
-        assert.ok(Math.abs(p.y) <= m.hh + FIELD.playerMargin + 0.5, `${mode}: player y out ${p.y}`);
+        assert.ok(Math.abs(p.x) <= m.hw + FIELD.goalDepth + 0.5, `${mode}: player x out ${p.x}`);
+        assert.ok(Math.abs(p.y) <= m.hh + 0.5, `${mode}: player y out ${p.y}`);
       }
       if (m.state === 'ended') break;
     }

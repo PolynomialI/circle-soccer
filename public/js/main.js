@@ -34,7 +34,7 @@ function showScreen(name) {
 }
 
 function overlayOpen() {
-  return ['pause', 'settings', 'help'].some((id) => !$(id).classList.contains('hidden'));
+  return ['pause', 'settings'].some((id) => !$(id).classList.contains('hidden'));
 }
 
 function setOverlay(id, open) {
@@ -215,7 +215,7 @@ function buildView(m, dt) {
     sc: a.sc,
     ball: {
       x: lerp(a.b[0], b.b[0], t), y: lerp(a.b[1], b.b[1], t), z: lerp(a.b[2], b.b[2], t),
-      vx: b.b[3], vy: b.b[4], spin: b.b[5],
+      vx: b.b[3], vy: b.b[4], spin: b.b[5], owner: b.b[6],
     },
     players,
     powerups: a.pu.map((pu) => ({ id: pu[0], type: m.init.powerupTypes[pu[1]], x: pu[2], y: pu[3], ttl: pu[4] })),
@@ -374,7 +374,7 @@ setInterval(() => {
   });
 }, 2000);
 
-// ---- settings & help ---------------------------------------------------------------
+// ---- settings ----------------------------------------------------------------------
 
 function renderBinds() {
   const table = $('binds');
@@ -396,38 +396,6 @@ function renderBinds() {
     tr.append(label, cell);
     table.appendChild(tr);
   }
-  document.querySelectorAll('[data-bind]').forEach((el) => {
-    el.textContent = keyLabel(settings.binds[el.dataset.bind]);
-  });
-}
-
-function renderHelp() {
-  const table = $('help-keys');
-  table.replaceChildren();
-  const rows = [
-    ['Move', ['moveUp', 'moveLeft', 'moveDown', 'moveRight']],
-    ['Aim', ['aimUp', 'aimLeft', 'aimDown', 'aimRight']],
-    ['Shoot (hold to charge)', ['shoot']],
-    ['Lob (hold to charge)', ['lob']],
-    ['Pass', ['pass']],
-    ['Dash', ['dash']],
-    ['Slide tackle', ['tackle']],
-    ['Menu', null],
-  ];
-  for (const [label, ids] of rows) {
-    const tr = document.createElement('tr');
-    const l = document.createElement('td');
-    l.textContent = label;
-    const k = document.createElement('td');
-    for (const name of ids ? ids.map((id) => keyLabel(settings.binds[id])) : ['Esc']) {
-      const span = document.createElement('span');
-      span.className = 'key';
-      span.textContent = name;
-      k.append(span, ' ');
-    }
-    tr.append(l, k);
-    table.appendChild(tr);
-  }
 }
 
 function openSettings() {
@@ -437,20 +405,12 @@ function openSettings() {
   setOverlay('settings', true);
 }
 
-function openHelp() {
-  renderHelp();
-  setOverlay('help', true);
-}
-
 $('open-settings').addEventListener('click', openSettings);
 $('pause-settings').addEventListener('click', openSettings);
-$('open-help').addEventListener('click', openHelp);
-$('pause-help').addEventListener('click', openHelp);
 $('close-settings').addEventListener('click', () => {
   app.listening = null;
   setOverlay('settings', false);
 });
-$('close-help').addEventListener('click', () => setOverlay('help', false));
 $('reset-binds').addEventListener('click', () => {
   resetBinds(settings);
   saveSettings(settings);
@@ -481,7 +441,6 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Escape' || app.listening) return;
   if (!$('settings').classList.contains('hidden')) setOverlay('settings', false);
-  else if (!$('help').classList.contains('hidden')) setOverlay('help', false);
   else if (app.screen === 'game' && $('result').classList.contains('hidden')) {
     setOverlay('pause', $('pause').classList.contains('hidden'));
   }
