@@ -6,13 +6,13 @@ Wacky online multiplayer 2D football where every player is a circle. Quick Play 
 
 - **Modes:** Quick Play 1v1 and 2v2 queues, plus private rooms with a 5-letter code or invite link (`/?room=CODE`). Pick teams or spectate. The host chooses the mode and starts the match. Any number of matches, queues and rooms run at the same time.
 - **Possession:** touch the ball to pick it up. It sticks in front of you and swings round to wherever you aim. An opponent who runs into it steals it; teammates pass through it.
-- **Charged shots:** hold shoot to power up, then release. Charged shots skip along the grass, and very hard shots bounce off players instead of sticking.
+- **Charged shots:** hold shoot to power up, then release. Shots stay on the grass, and very hard shots bounce off players instead of sticking. With Mega kick, shots take off, and a full-power one from distance can sail over the bar.
 - **Curve:** run sideways while striking and the ball bends that way (Magnus effect).
 - **Lobs:** the ball has real height. It flies over players, bounces with decreasing hops, rolls to a stop, and can clip the crossbar.
 - **Smart passes:** passes go to the teammate nearest your aim and lead their run.
 - **Dash & slide tackle:** both cost stamina. Dashing shoves people; a slide knocks the ball loose and stuns opponents you hit.
 - **Cartoon ball:** very bouncy walls, posts and ground, squash and stretch, and a speed trail.
-- **Power-ups (rare):** Speed, Mega kick, Giant, Endless stamina. At most one on the pitch, every 25–40 seconds.
+- **Power-ups (rare):** Speed, Mega kick, Giant, Endless stamina. At most one on the pitch, every 25–40 seconds. Active power-ups end when a goal is scored.
 - **Rules:** 3-minute matches with golden goal if tied. Goals record the scorer, assist and own goals. A team that empties forfeits.
 - **Settings:** every key can be rebound (saved in the browser), plus a volume control.
 

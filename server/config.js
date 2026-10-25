@@ -32,14 +32,16 @@ export const FIELD = {
   goalDepth: 50,
   postRadius: 6,
   playerMargin: 40, // safety box around the pitch; players are normally kept inside the lines
-  crossbarHeight: 42, // ball higher than this flies over the goal
+  crossbarHeight: 80, // ball higher than this flies over the goal
 };
 
 export const PLAYER = {
-  radius: 14,
+  radius: 16,
   mass: 3,
-  maxSpeed: 300,
+  maxSpeed: 270,
   response: 36, // how quickly velocity approaches the desired velocity (36 = ~full speed in 3 ticks)
+  turnRate: 9, // rad/s the running direction swings round (instant when starting from a standstill)
+  aimTurnRate: 14, // rad/s the aim swings round when using the aim keys
   chargingSpeedMul: 0.75,
   recoverSpeedMul: 0.45,
   height: 30, // ball above this passes over players
@@ -48,7 +50,7 @@ export const PLAYER = {
   staminaMax: 100,
   staminaRegen: 22,
   staminaRegenDelay: 0.6,
-  wallBounce: 0.4,
+  wallBounce: 0.1,
   playerBounce: 0.6,
 };
 
@@ -65,7 +67,7 @@ export const POSSESSION = {
 };
 
 export const BALL = {
-  radius: 8,
+  radius: 9,
   mass: 1,
   groundFriction: 0.8, // exponential decay per second when rolling
   rollResistance: 40, // constant deceleration when rolling
@@ -87,7 +89,7 @@ export const KICK = {
   maxPower: 1400,
   grace: 0.15, // a released kick waits this long for the ball to come in reach
   maxCurve: 0.75, // spin (rad/s of velocity rotation) at full sideways movement
-  shotHopMax: 220, // charged shots skip along the ground
+  megaLiftMax: 520, // only Mega kick shots leave the ground; full charge can clear the crossbar
   lobPowerMul: 0.72,
   lobLiftMin: 320,
   lobLiftMax: 620,

@@ -298,14 +298,10 @@ export class Renderer {
     const r = info.roster.get(p.idx);
     if (!r) return;
     const isMe = p.idx === info.me;
-    let aimX = p.aimX;
-    let aimY = p.aimY;
+    const aimX = p.aimX;
+    const aimY = p.aimY;
     let charge = p.charge;
     let ct = p.ct;
-    if (isMe && info.localAim) {
-      aimX = info.localAim.x;
-      aimY = info.localAim.y;
-    }
     if (isMe && info.localCharge !== undefined) {
       ct = info.localCharge ? info.localCharge.type : 0;
       charge = info.localCharge ? info.localCharge.value : 0;

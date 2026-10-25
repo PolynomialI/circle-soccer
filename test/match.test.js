@@ -38,7 +38,8 @@ function giveBall(m, id, ax = 1, ay = 0) {
   m.handleInput(id, { ax, ay });
   p.aimX = ax;
   p.aimY = ay;
-  p.holdAngle = Math.atan2(ay, ax);
+  p.aimAngle = Math.atan2(ay, ax);
+  p.holdAngle = p.aimAngle;
   m.ball.ownerId = id;
   m.step();
   return p;
@@ -64,6 +65,20 @@ test('movement reaches near full speed almost instantly', () => {
   m.handleInput('a', { mx: 1, my: 0 });
   stepFor(m, 3 * DT);
   assert.ok(a.vx > PLAYER.maxSpeed * 0.9, `only reached ${a.vx}`);
+});
+
+test('changing direction while running turns in a smooth arc', () => {
+  const m = newMatch();
+  const a = park(m, 'a', -300, 0);
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 0.3);
+  m.handleInput('a', { mx: 0, my: 1 });
+  m.step();
+  const early = Math.atan2(a.vy, a.vx);
+  assert.ok(early > 0.05 && early < 0.6, `should start bending, not snap (angle ${early})`);
+  stepFor(m, 0.3);
+  assert.ok(Math.abs(Math.atan2(a.vy, a.vx) - Math.PI / 2) < 0.05, 'should finish the turn');
+  assert.ok(Math.hypot(a.vx, a.vy) > PLAYER.maxSpeed * 0.9, 'keeps its speed through the turn');
 });
 
 test('touching a loose ball picks it up and it rides in front of the carrier', () => {
@@ -227,6 +242,46 @@ test('a lob flies over a defender, bounces a lot, then settles', () => {
   assert.ok(a);
 });
 
+test('ordinary and charged shots stay on the grass', () => {
+  const m = newMatch();
+  park(m, 'b', 0, -300);
+  park(m, 'a', -400, 0);
+  giveBall(m, 'a', 1, 0);
+  m.handleInput('a', { ax: 1, ay: 0, sh: true });
+  stepFor(m, 1);
+  m.handleInput('a', { ax: 1, ay: 0, sh: false });
+  let maxZ = 0;
+  for (let i = 0; i < 60; i++) {
+    m.step();
+    maxZ = Math.max(maxZ, m.ball.z);
+  }
+  assert.ok(Math.hypot(m.ball.vx, m.ball.vy) > 0, 'shot should have gone');
+  assert.equal(maxZ, 0);
+});
+
+test('a full Mega kick from distance can sail over the bar, a close one scores', () => {
+  const shoot = (fromX) => {
+    const m = newMatch();
+    park(m, 'b', 0, -300);
+    const a = park(m, 'a', fromX, 0);
+    a.effects.mega = 8;
+    giveBall(m, 'a', 1, 0);
+    m.handleInput('a', { ax: 1, ay: 0, sh: true });
+    a.charge = 1;
+    m.handleInput('a', { ax: 1, ay: 0, sh: false });
+    let maxZ = 0;
+    for (let i = 0; i < 90 && m.state === 'playing'; i++) {
+      m.step();
+      maxZ = Math.max(maxZ, m.ball.z);
+    }
+    return { score: m.score[0], maxZ };
+  };
+  const far = shoot(-50);
+  assert.equal(far.score, 0, 'long mega shot should go over');
+  assert.ok(far.maxZ > FIELD.crossbarHeight);
+  assert.equal(shoot(500).score, 1, 'close mega shot should score');
+});
+
 test('a high ball hits the crossbar instead of scoring', () => {
   const m = newMatch();
   park(m, 'a', 0, -300);
@@ -235,6 +290,15 @@ test('a high ball hits the crossbar instead of scoring', () => {
   stepFor(m, 0.3);
   assert.deepEqual(m.score, [0, 0]);
   assert.ok(m.ball.vx < 0, 'ball should bounce back off the crossbar');
+});
+
+test('players can walk right to the back of the net', () => {
+  const m = newMatch();
+  park(m, 'b', 0, -300);
+  const a = park(m, 'a', m.hw - 30, 0);
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 0.6);
+  assert.ok(a.x > m.hw + FIELD.goalDepth - a.r - 1, `stopped short at ${a.x}`);
 });
 
 test('pass goes to the teammate in the aim cone, who collects it', () => {
@@ -301,6 +365,19 @@ test('tied at full time goes to golden goal; next goal ends it', () => {
   stepFor(m, MATCH.goalPause + 0.1);
   assert.equal(m.state, 'ended');
   assert.equal(m.result.winner, 1);
+});
+
+test('a goal clears everyone\'s power-up timers', () => {
+  const m = newMatch();
+  const a = park(m, 'a', m.hw - 200, 0);
+  const b = park(m, 'b', 0, -300);
+  a.effects.speed = 5;
+  b.effects.giant = 4;
+  giveBall(m, 'a', 1, 0);
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 1.5);
+  assert.deepEqual(m.score, [1, 0]);
+  for (const p of [a, b]) assert.ok(Object.values(p.effects).every((t) => t === 0));
 });
 
 test('leaving empties a team and forfeits the match', () => {

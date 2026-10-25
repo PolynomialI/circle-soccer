@@ -232,18 +232,6 @@ function buildView(m, dt) {
   return view;
 }
 
-function localAim() {
-  const s = input.state();
-  if (s.ax || s.ay) return normalize(s.ax, s.ay);
-  if (s.mx || s.my) return normalize(s.mx, s.my);
-  return null;
-}
-
-function normalize(x, y) {
-  const l = Math.hypot(x, y);
-  return { x: x / l, y: y / l };
-}
-
 function showResult({ result, quick }) {
   const m = app.match;
   const myTeam = m ? m.myTeam : -1;
@@ -468,7 +456,6 @@ function frame(now) {
         me: m.me,
         spectator: m.spectator,
         ping: app.ping,
-        localAim: m.spectator ? null : localAim(),
         localCharge: m.spectator ? undefined : canCharge ? input.localCharge(m.init.chargeTime) : null,
       }, dt);
     }

@@ -11,6 +11,12 @@ const STATE_CODE = { normal: 0, dash: 1, slide: 2, recover: 3, stunned: 4 };
 const CHARGE_CODE = { shot: 1, lob: 2 };
 
 const lerp = (a, b, t) => a + (b - a) * t;
+
+// Rotates an angle towards a target by at most maxStep, the short way round.
+function turnToward(angle, target, maxStep) {
+  const diff = Math.atan2(Math.sin(target - angle), Math.cos(target - angle));
+  return angle + clamp(diff, -maxStep, maxStep);
+}
 const r1 = (v) => Math.round(v * 10) / 10;
 const r2 = (v) => Math.round(v * 100) / 100;
 
@@ -98,7 +104,7 @@ export class Match {
     this.players.set(id, {
       id, name, team, num, idx: this.nextIdx++,
       x: 0, y: 0, vx: 0, vy: 0, r: PLAYER.radius, m: PLAYER.mass,
-      aimX: team === 0 ? 1 : -1, aimY: 0,
+      aimX: team === 0 ? 1 : -1, aimY: 0, aimAngle: team === 0 ? 0 : Math.PI, heading: team === 0 ? 0 : Math.PI,
       input: { mx: 0, my: 0, ax: 0, ay: 0, sh: false, lb: false, ps: 0, ds: 0, tk: 0 },
       charging: null, charge: 0, pendingKick: null,
       wantPass: false, wantDash: false, wantTackle: false,
@@ -146,7 +152,8 @@ export class Match {
           p.y = 0;
         }
         Object.assign(p, {
-          vx: 0, vy: 0, aimX: -side, aimY: 0, state: 'normal', stateTimer: 0,
+          vx: 0, vy: 0, aimX: -side, aimY: 0, aimAngle: side < 0 ? 0 : Math.PI, heading: side < 0 ? 0 : Math.PI,
+          state: 'normal', stateTimer: 0,
           charging: null, charge: 0, pendingKick: null, pickupCooldown: 0,
           wantPass: false, wantDash: false, wantTackle: false,
         });
@@ -210,7 +217,7 @@ export class Match {
     switch (this.state) {
       case 'countdown':
         this.stateTimer -= DT;
-        for (const p of this.players.values()) this.updateAim(p, normalize(p.input.mx, p.input.my));
+        for (const p of this.players.values()) this.updateAim(p, false);
         if (this.stateTimer <= 0) {
           this.state = 'playing';
           this.stateTimer = 0;
@@ -304,6 +311,7 @@ export class Match {
         this.spendStamina(p, DASH.cost);
         p.vx = d.x * DASH.speed;
         p.vy = d.y * DASH.speed;
+        p.heading = Math.atan2(d.y, d.x);
         p.state = 'dash';
         p.stateTimer = DASH.time;
         this.emit({ k: 'dash', p: p.idx });
@@ -316,6 +324,7 @@ export class Match {
         this.spendStamina(p, TACKLE.cost);
         p.vx = d.x * TACKLE.speed;
         p.vy = d.y * TACKLE.speed;
+        p.heading = Math.atan2(d.y, d.x);
         p.dirX = d.x;
         p.dirY = d.y;
         p.state = 'slide';
@@ -346,10 +355,16 @@ export class Match {
       if (p.effects.speed > 0) speed *= POWERUP.types.speed.speedMul;
       if (p.charging) speed *= PLAYER.chargingSpeedMul;
       if (p.state === 'recover') speed *= PLAYER.recoverSpeedMul;
+      // Running direction swings round smoothly; from a standstill it starts straight away.
+      const moving = mv.x || mv.y;
+      if (moving) {
+        const target = Math.atan2(mv.y, mv.x);
+        p.heading = len(p.vx, p.vy) < 60 ? target : turnToward(p.heading, target, PLAYER.turnRate * DT);
+      }
       const k = Math.min(1, PLAYER.response * DT);
-      p.vx += (mv.x * speed - p.vx) * k;
-      p.vy += (mv.y * speed - p.vy) * k;
-      this.updateAim(p, mv);
+      p.vx += ((moving ? Math.cos(p.heading) * speed : 0) - p.vx) * k;
+      p.vy += ((moving ? Math.sin(p.heading) * speed : 0) - p.vy) * k;
+      this.updateAim(p, moving);
     } else {
       const f = Math.exp((p.state === 'stunned' ? -5 : -1.5) * DT);
       p.vx *= f;
@@ -358,23 +373,18 @@ export class Match {
 
     // A carried ball swings smoothly round to wherever the carrier aims.
     if (this.ball.ownerId === p.id) {
-      let diff = Math.atan2(p.aimY, p.aimX) - p.holdAngle;
-      diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-      const maxTurn = POSSESSION.turnRate * DT;
-      p.holdAngle += clamp(diff, -maxTurn, maxTurn);
+      p.holdAngle = turnToward(p.holdAngle, Math.atan2(p.aimY, p.aimX), POSSESSION.turnRate * DT);
     }
   }
 
-  // Arrow keys aim; with no arrow held the player aims where they run.
-  updateAim(p, mv) {
+  // Aim keys swing the aim round smoothly; with none held the player aims where they run.
+  updateAim(p, moving) {
     const a = normalize(p.input.ax, p.input.ay);
-    if (a.x || a.y) {
-      p.aimX = a.x;
-      p.aimY = a.y;
-    } else if (mv.x || mv.y) {
-      p.aimX = mv.x;
-      p.aimY = mv.y;
-    }
+    if (a.x || a.y) p.aimAngle = turnToward(p.aimAngle, Math.atan2(a.y, a.x), PLAYER.aimTurnRate * DT);
+    else if (moving) p.aimAngle = p.heading;
+    else return;
+    p.aimX = Math.cos(p.aimAngle);
+    p.aimY = Math.sin(p.aimAngle);
   }
 
   hasStamina(p, cost) {
@@ -450,7 +460,8 @@ export class Match {
         power *= KICK.lobPowerMul;
         b.vz = lerp(KICK.lobLiftMin, KICK.lobLiftMax, k.charge);
       } else {
-        b.vz = KICK.shotHopMax * k.charge;
+        // Ordinary shots stay on the grass; Mega kick shots take off.
+        b.vz = p.effects.mega > 0 ? KICK.megaLiftMax * k.charge : 0;
       }
     }
 
@@ -534,7 +545,6 @@ export class Match {
     b.ownerId = null;
     b.vx = slider.dirX * TACKLE.ballPoke + carrier.vx * 0.3;
     b.vy = slider.dirY * TACKLE.ballPoke + carrier.vy * 0.3;
-    b.vz = 180;
     b.ignoreId = slider.id;
     b.ignoreTimer = 0.15;
     carrier.pickupCooldown = POSSESSION.loseDelay;
@@ -758,7 +768,7 @@ export class Match {
         for (const post of this.posts) collideCircles(post, p, PLAYER.wallBounce);
         for (const wall of this.ballWalls) collideSegment(p, wall, PLAYER.wallBounce);
         for (const net of this.nets) collideSegment(p, net, PLAYER.wallBounce);
-        confineToBox(p, -this.hw - m, -this.hh - m, this.hw + m, this.hh + m, PLAYER.wallBounce);
+        confineToBox(p, -this.hw - FIELD.goalDepth, -this.hh - m, this.hw + FIELD.goalDepth, this.hh + m, PLAYER.wallBounce);
       }
 
       const carrier = b.ownerId ? this.players.get(b.ownerId) : null;
@@ -805,6 +815,7 @@ export class Match {
       p.charging = null;
       p.charge = 0;
       p.pendingKick = null;
+      for (const e of EFFECTS) p.effects[e] = 0; // power-ups end when a goal goes in
     }
   }
 
