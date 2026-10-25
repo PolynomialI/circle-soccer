@@ -67,7 +67,22 @@ test('movement reaches near full speed almost instantly', () => {
   assert.ok(a.vx > PLAYER.maxSpeed * 0.9, `only reached ${a.vx}`);
 });
 
-test('changing direction while running turns in a smooth arc', () => {
+test('reversing goes straight back the other way, with no sideways drift', () => {
+  const m = newMatch();
+  const a = park(m, 'a', -300, 0);
+  m.handleInput('a', { mx: 1, my: 0 });
+  stepFor(m, 0.3);
+  m.handleInput('a', { mx: -1, my: 0 });
+  let maxDrift = 0;
+  for (let i = 0; i < 30; i++) {
+    m.step();
+    maxDrift = Math.max(maxDrift, Math.abs(a.y));
+  }
+  assert.ok(maxDrift < 0.01, `drifted ${maxDrift} sideways`);
+  assert.ok(a.vx < -PLAYER.maxSpeed * 0.9, 'should be running left at full speed');
+});
+
+test('a 90 degree turn rounds the corner briefly instead of snapping', () => {
   const m = newMatch();
   const a = park(m, 'a', -300, 0);
   m.handleInput('a', { mx: 1, my: 0 });
@@ -75,10 +90,10 @@ test('changing direction while running turns in a smooth arc', () => {
   m.handleInput('a', { mx: 0, my: 1 });
   m.step();
   const early = Math.atan2(a.vy, a.vx);
-  assert.ok(early > 0.05 && early < 0.6, `should start bending, not snap (angle ${early})`);
-  stepFor(m, 0.3);
+  assert.ok(early > 0.1 && early < 1.2, `should be mid-turn (angle ${early})`);
+  stepFor(m, 0.2);
   assert.ok(Math.abs(Math.atan2(a.vy, a.vx) - Math.PI / 2) < 0.05, 'should finish the turn');
-  assert.ok(Math.hypot(a.vx, a.vy) > PLAYER.maxSpeed * 0.9, 'keeps its speed through the turn');
+  assert.ok(Math.hypot(a.vx, a.vy) > PLAYER.maxSpeed * 0.9);
 });
 
 test('touching a loose ball picks it up and it rides in front of the carrier', () => {

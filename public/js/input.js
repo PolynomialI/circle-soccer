@@ -6,6 +6,8 @@ export class Input {
     this.settings = settings;
     this.send = send;
     this.held = new Set(); // action ids currently held
+    this.pressOrder = {}; // action id -> when it was last pressed, so the newest key wins
+    this.pressCount = 0;
     this.counters = { ps: 0, ds: 0, tk: 0 };
     this.enabled = false;
     this.last = '';
@@ -29,6 +31,7 @@ export class Input {
     if (down) {
       if (e.repeat || this.held.has(action)) return;
       this.held.add(action);
+      this.pressOrder[action] = ++this.pressCount;
       if (action === 'pass') this.counters.ps++;
       if (action === 'dash') this.counters.ds++;
       if (action === 'tackle') this.counters.tk++;
@@ -39,8 +42,12 @@ export class Input {
     this.flush();
   }
 
+  // Opposite keys don't cancel out: whichever was pressed last wins.
   axis(neg, pos) {
-    return (this.held.has(pos) ? 1 : 0) - (this.held.has(neg) ? 1 : 0);
+    const n = this.held.has(neg);
+    const p = this.held.has(pos);
+    if (n && p) return this.pressOrder[pos] > this.pressOrder[neg] ? 1 : -1;
+    return p ? 1 : n ? -1 : 0;
   }
 
   state() {

@@ -40,8 +40,8 @@ export const PLAYER = {
   mass: 3,
   maxSpeed: 270,
   response: 36, // how quickly velocity approaches the desired velocity (36 = ~full speed in 3 ticks)
-  turnRate: 9, // rad/s the running direction swings round (instant when starting from a standstill)
-  aimTurnRate: 14, // rad/s the aim swings round when using the aim keys
+  turnResponse: 16, // how quickly leftover sideways speed fades when changing direction (rounds corners)
+  aimTurnRate: 14, // rad/s the aim swings round to the new direction
   chargingSpeedMul: 0.75,
   recoverSpeedMul: 0.45,
   height: 30, // ball above this passes over players

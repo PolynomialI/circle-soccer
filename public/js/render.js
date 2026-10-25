@@ -595,7 +595,6 @@ export class Renderer {
     ctx.fillText(`${this.init.mode}${info.spectator ? ' · spectating' : ''}`, 14, 22);
     ctx.textAlign = 'right';
     if (info.ping !== null) ctx.fillText(`${info.ping} ms`, this.w - 14, 22);
-    ctx.fillText('Esc: menu', this.w - 14, 40);
 
     // Own stamina + active power-ups
     const me = view.players.find((p) => p.idx === info.me);
