@@ -125,3 +125,41 @@ test('a keeper gets across to stop a shot', () => {
     assert.equal(m.score[0], 0, `${level} keeper let it in`);
   }
 });
+
+// Bot teammates should look for the human. A stand-in "human" (driven by its own brain, so the
+// squad treats it as a person) plays up front; count the passes that reach it.
+function passesToHuman(format, home, seed) {
+  const rng = seeded(seed);
+  const setup = buildPractice({ format, level: 'intermediate', teammateLevel: home, humanId: 'h', humanName: 'Me' });
+  const m = new Match({ mode: setup.mode, players: setup.players, rng });
+  const squad = new BotSquad(m, setup.bots, rng);
+  const human = new BotSquad(m, [{ id: 'h', team: 0, role: 'fwd', home: { depth: 0.64, lat: 0.3 }, level: 'intermediate' }], rng);
+  let fromBot = false;
+  let last = null;
+  let received = 0;
+  for (let i = 0; i < 60 * 200 && !m.done; i++) {
+    squad.update();
+    human.update();
+    m.step();
+    for (const e of m.events) {
+      if (e.k !== 'kick') continue;
+      const p = [...m.players.values()].find((q) => q.idx === e.p);
+      fromBot = p.bot && p.team === 0 && (e.t === 'pass' || e.t === 'lob');
+    }
+    m.events = [];
+    const owner = m.ball.ownerId;
+    if (owner && owner !== last) {
+      if (owner === 'h' && fromBot) received++;
+      fromBot = false;
+    }
+    last = owner;
+  }
+  return received;
+}
+
+test('bot teammates pass to the human', () => {
+  const mid = passesToHuman('3v3', 'intermediate', 11) + passesToHuman('3v3', 'intermediate', 18);
+  assert.ok(mid >= 32, `only ${mid} passes reached the human in two 3v3 matches`);
+  const big = passesToHuman('5v5', 'hard', 11) + passesToHuman('5v5', 'hard', 18);
+  assert.ok(big >= 45, `only ${big} passes reached the human in two 5v5 matches`);
+});

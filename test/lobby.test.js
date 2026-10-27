@@ -162,13 +162,16 @@ test('host leaving hands the room to someone else', async () => {
 test('practice starts a match against bots that move and play', async () => {
   const s = await player('Solo');
   const start = waitFor(s, 'matchStart');
-  s.emit('startPractice', { format: '2v2', level: 'hard' });
+  s.emit('startPractice', { format: '2v2', level: 'hard', home: 'easy' });
   const { init, roster, spectator } = await start;
   assert.equal(spectator, false);
   assert.equal(init.mode, '2v2');
   assert.equal(roster.length, 4);
   assert.equal(roster.filter((r) => r.bot).length, 3);
   assert.equal(roster.find((r) => r.id === s.id_).team, 0);
+  assert.equal(init.label, 'Practice · 2v2 · Easy vs Hard');
+  assert.ok(roster.find((r) => r.bot && r.team === 0).name.startsWith('Rookie'), 'home bots use the home difficulty');
+  assert.ok(roster.filter((r) => r.team === 1).every((r) => r.name.startsWith('Ace')), 'away bots use the away difficulty');
   // After the countdown the bots should be running about.
   await sleep(3300);
   const a = await waitFor(s, 'snap');
@@ -186,7 +189,7 @@ test('practice starts a match against bots that move and play', async () => {
   room.match.score = [2, 1];
   room.match.clock = 0.05;
   const { practice } = await waitFor(s, 'matchEnd');
-  assert.deepEqual(practice, { format: '2v2', level: 'hard' });
+  assert.deepEqual(practice, { format: '2v2', level: 'hard', home: 'easy' });
   s.emit('leaveRoom');
 });
 

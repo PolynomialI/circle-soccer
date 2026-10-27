@@ -6,21 +6,21 @@ export const BOT_LEVELS = {
   easy: {
     name: 'Rookie', think: 0.45, keeperReact: 0.5, keeperNoise: 40, speedMul: 0.8, eightDir: true,
     aimError: 0.3, shootRange: 420, charge: [0.15, 0.55], lobKeeper: false,
-    passRate: 0.12, shortPass: 0, minHold: 0.6, pressure: 55, dribbleAvoid: 0.15,
+    passRate: 0.12, shortPass: 0, minHold: 0.6, pressure: 55, dribbleAvoid: 0.15, feedHuman: 0.45,
     tackle: 0, dash: 0, pressers: 1, counterPress: 0, discipline: 0.35, support: 0,
     lineHeight: -0.05, mistake: 0.2,
   },
   intermediate: {
     name: 'Pro', think: 0.25, keeperReact: 0.3, keeperNoise: 20, speedMul: 0.9, eightDir: false,
     aimError: 0.15, shootRange: 520, charge: [0.4, 0.8], lobKeeper: false,
-    passRate: 0.35, shortPass: 0.3, minHold: 0.4, pressure: 80, dribbleAvoid: 0.5,
+    passRate: 0.35, shortPass: 0.3, minHold: 0.4, pressure: 80, dribbleAvoid: 0.5, feedHuman: 0.75,
     tackle: 0.12, dash: 0.15, pressers: 1, counterPress: 0, discipline: 0.6, support: 1,
     lineHeight: 0, mistake: 0.07,
   },
   hard: {
     name: 'Ace', think: 0.13, keeperReact: 0.16, keeperNoise: 8, speedMul: 1, eightDir: false,
     aimError: 0.07, shootRange: 600, charge: [0.6, 1], lobKeeper: true,
-    passRate: 0.5, shortPass: 0.45, minHold: 0.3, pressure: 100, dribbleAvoid: 0.8,
+    passRate: 0.5, shortPass: 0.45, minHold: 0.3, pressure: 100, dribbleAvoid: 0.8, feedHuman: 0.7,
     tackle: 0.3, dash: 0.35, pressers: 2, counterPress: 0, discipline: 0.82, support: 1,
     lineHeight: 0.03, mistake: 0.02,
   },
@@ -29,12 +29,13 @@ export const BOT_LEVELS = {
   barcelona: {
     name: 'Barça', think: 0.06, keeperReact: 0.07, keeperNoise: 3, speedMul: 1, eightDir: false,
     aimError: 0.025, shootRange: 560, charge: [0.75, 1], lobKeeper: true,
-    passRate: 0.85, shortPass: 1, minHold: 0.15, pressure: 120, dribbleAvoid: 1,
+    passRate: 0.85, shortPass: 1, minHold: 0.15, pressure: 120, dribbleAvoid: 1, feedHuman: 0.8,
     tackle: 0.38, dash: 0.45, pressers: 2, counterPress: 3, discipline: 0.95, support: 2,
     lineHeight: 0.1, mistake: 0,
   },
 };
 export const TEAMMATE_LEVEL = 'intermediate';
+// feedHuman: chance, each time a bot decides, that it passes to an open human teammate.
 
 // Who plays where, by team size. Positioning and playstyle change with the number of players.
 const ROLE_TEMPLATES = {
@@ -64,6 +65,22 @@ const norm = (x, y) => {
 };
 const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
+// Charge for a lob whose first bounce lands about `distance` away.
+function lobChargeFor(distance) {
+  let charge = 0.5;
+  let bestErr = Infinity;
+  for (let c = 0; c <= 1; c += 0.05) {
+    const power = lerp(KICK.minPower, KICK.maxPower, c) * KICK.lobPowerMul;
+    const air = (2 * lerp(KICK.lobLiftMin, KICK.lobLiftMax, c)) / BALL.gravity;
+    const err = Math.abs(power * air - distance);
+    if (err < bestErr) {
+      bestErr = err;
+      charge = c;
+    }
+  }
+  return charge;
+}
+
 function segDist(a, b, p) {
   const ex = b.x - a.x;
   const ey = b.y - a.y;
@@ -87,8 +104,8 @@ function teamSlots(size) {
 }
 
 // Builds the players for a practice match: the human on team 0 (red) with bot teammates,
-// against a full bot team. `level` is the opponents' difficulty. Without a humanId both
-// teams are bots (used for bot-vs-bot testing).
+// against a full bot team. `level` is the opponents' (away) difficulty and `teammateLevel`
+// the human's bot teammates' (home). Without a humanId both teams are bots (used in tests).
 export function buildPractice({ format, level, humanId = null, humanName = '', teammateLevel = TEAMMATE_LEVEL }) {
   const fmt = PRACTICE_FORMATS[format];
   const players = [];
@@ -282,6 +299,8 @@ class Bot {
     if (plan.action && plan.action.type === 'charge' && hasBall) {
       plan.dir = this.dribbleDir(ctx);
       plan.target = null;
+      const to = plan.action.toId && ctx.m.players.get(plan.action.toId);
+      if (to) plan.action.aim = this.leadAim(p, to);
       return;
     }
     plan.action = null;
@@ -510,6 +529,11 @@ class Bot {
     const dribbleValue = 0.25 + (pressure > lv.pressure ? 0.2 : -0.2);
 
     if (shot && (shot.quality > 0.55 || dG < 260)) return this.startShot(ctx, tc, shot.target, dG, 'shot');
+    // Bots play for the human: if a human teammate is open, give them the ball.
+    const human = this.humanOption(ctx, tc, p, pressure);
+    if (human && held >= Math.min(lv.minHold, 0.25) && this.rand() < lv.feedHuman) {
+      return human.chip ? this.startChip(ctx, human.to) : this.startPass(human.to);
+    }
     const lob = lv.lobKeeper && this.lobChance(ctx, tc, p, goal, dG);
     if (lob) return this.startShot(ctx, tc, goal, dG, 'lob');
     const wantsPass = pressure < lv.pressure || this.rand() < lv.passRate || (pass && pass.score > dribbleValue + 0.4);
@@ -550,18 +574,7 @@ class Bot {
     const lv = this.level;
     let charge;
     if (kind === 'lob') {
-      // Pick the charge whose first bounce lands just short of the goal.
-      charge = 0.5;
-      let bestErr = Infinity;
-      for (let c = 0; c <= 1; c += 0.05) {
-        const power = lerp(KICK.minPower, KICK.maxPower, c) * KICK.lobPowerMul;
-        const air = (2 * lerp(KICK.lobLiftMin, KICK.lobLiftMax, c)) / BALL.gravity;
-        const err = Math.abs(power * air - (dG - 80));
-        if (err < bestErr) {
-          bestErr = err;
-          charge = c;
-        }
-      }
+      charge = lobChargeFor(dG - 80); // first bounce just short of the goal
     } else {
       charge = clamp(Math.max(lerp(lv.charge[0], lv.charge[1], this.rand()), dG / 1100), lv.charge[0], lv.charge[1]);
     }
@@ -604,9 +617,48 @@ class Bot {
     this.plan.dir = null;
   }
 
+  // An open human teammate to give the ball to: some space around them and not miles behind
+  // the ball (unless we're under pressure and need an outlet). If a defender blocks the ground
+  // lane, chip it over them instead.
+  humanOption(ctx, tc, p, pressure) {
+    const myDepth = this.squad.depth(tc, p, ctx);
+    let best = null;
+    for (const t of tc.members) {
+      if (t === p || this.squad.botFor(t) || t.state === 'stunned') continue;
+      const d = dist(p, t);
+      if (d < 70 || d > 1000) continue;
+      if (Math.min(999, ...tc.opponents.map((o) => dist(o, t))) < 45) continue;
+      if (this.squad.depth(tc, t, ctx) < myDepth - 0.25 && pressure > this.level.pressure) continue;
+      const lane = Math.min(999, ...tc.opponents.map((o) => segDist(p, t, o) - o.r));
+      const chip = lane < 10 + d * 0.02;
+      if (chip && d < 220) continue; // too close to lift it over anyone
+      if (!best || (best.chip && !chip) || (best.chip === chip && d < dist(p, best.to))) best = { to: t, chip };
+    }
+    return best;
+  }
+
+  // Aim where a teammate will be by the time the ball gets there.
+  leadAim(p, to) {
+    const t = Math.min(1, dist(p, to) / 700);
+    return norm(to.x + to.vx * t - p.x, to.y + to.vy * t - p.y);
+  }
+
+  // Lob the ball over a blocked lane so it lands just in front of the teammate.
+  startChip(ctx, to) {
+    const p = this.player();
+    const charge = lobChargeFor(Math.max(150, dist(p, to) - 40));
+    this.plan.action = {
+      type: 'charge', kind: 'lob', aim: this.leadAim(p, to), toId: to.id,
+      start: this.squad.time, release: this.squad.time + charge * KICK.chargeTime, started: false,
+    };
+    this.plan.dir = null;
+  }
+
   // Keeper with the ball: find a safe pass, otherwise launch it upfield.
   clearBall(ctx, tc, pressure) {
     const p = this.player();
+    const human = this.humanOption(ctx, tc, p, pressure);
+    if (human && this.rand() < this.level.feedHuman) return human.chip ? this.startChip(ctx, human.to) : this.startPass(human.to);
     const pass = this.bestPass(ctx, tc, p);
     if (pass && pass.space > 110 && (pressure > 90 || this.level.shortPass > 0.5)) return this.startPass(pass.to);
     const lat = (this.rand() * 2 - 1) * 0.5;

@@ -107,13 +107,16 @@ $('join-code').addEventListener('keydown', (e) => {
 function startPractice(practice) {
   socket.emit('startPractice', practice);
 }
+// Home team = your bot teammates (none in Singleplayer or 1v1); away team = the opponents.
 const syncPracticeLevel = () => {
-  $('practice-level').disabled = $('practice-format').value === 'single';
+  const format = $('practice-format').value;
+  $('practice-home').disabled = format === 'single' || format === '1v1';
+  $('practice-away').disabled = format === 'single';
 };
 $('practice-format').addEventListener('change', syncPracticeLevel);
 syncPracticeLevel();
 $('start-practice').addEventListener('click', () => {
-  startPractice({ format: $('practice-format').value, level: $('practice-level').value });
+  startPractice({ format: $('practice-format').value, home: $('practice-home').value, level: $('practice-away').value });
 });
 
 // ---- private room lobby ------------------------------------------------------------

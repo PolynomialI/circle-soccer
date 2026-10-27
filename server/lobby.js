@@ -107,7 +107,7 @@ export class Lobby {
     socket.on('setTeam', (data) => this.setTeam(client, data && data.team));
     socket.on('setMode', (data) => this.setMode(client, data && data.mode));
     socket.on('startMatch', () => this.startPrivateMatch(client));
-    socket.on('startPractice', (data) => this.startPractice(client, data && data.format, data && data.level));
+    socket.on('startPractice', (data) => this.startPractice(client, data && data.format, data && data.level, data && data.home));
     socket.on('history', (cb) => {
       if (typeof cb !== 'function') return;
       const s = this.stats();
@@ -189,18 +189,22 @@ export class Lobby {
 
   // ---- practice against bots -------------------------------------------------------
 
-  startPractice(client, format, level) {
+  // level: the away (opponent) bots; home: your bot teammates.
+  startPractice(client, format, level, home) {
     if (!PRACTICE_FORMATS[format]) format = '1v1';
     if (!BOT_LEVELS[level]) level = 'intermediate';
+    if (!BOT_LEVELS[home]) home = 'intermediate';
     this.leaveQueue(client);
     this.leaveRoom(client);
-    const setup = buildPractice({ format, level, humanId: client.socket.id, humanName: client.name });
+    const setup = buildPractice({ format, level, teammateLevel: home, humanId: client.socket.id, humanName: client.name });
     const room = this.makeRoom(setup.mode, false);
-    room.practice = { format, level };
+    room.practice = { format, level, home };
     this.addMember(room, client, 0);
     room.match = new Match({ mode: setup.mode, players: setup.players });
     room.bots = new BotSquad(room.match, setup.bots);
-    const what = format === 'single' ? 'Singleplayer' : `${format} · ${PRACTICE_LABELS[level]}`;
+    let what = `${format} · ${PRACTICE_LABELS[home]} vs ${PRACTICE_LABELS[level]}`;
+    if (format === 'single') what = 'Singleplayer';
+    else if (format === '1v1') what = `1v1 · vs ${PRACTICE_LABELS[level]}`;
     const init = { ...room.match.initPayload(), label: `Practice · ${what}` };
     client.socket.emit('matchStart', { init, roster: room.match.roster(), spectator: false });
   }
