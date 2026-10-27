@@ -67,7 +67,7 @@ export class Match {
     this.teamHadPlayers = [false, false];
 
     this.buildWalls();
-    for (const p of players) this.addPlayer(p.id, p.name, p.team);
+    for (const p of players) this.addPlayer(p.id, p.name, p.team, p);
     this.resetPositions();
   }
 
@@ -99,10 +99,12 @@ export class Match {
     }));
   }
 
-  addPlayer(id, name, team) {
+  // opts.spot: kickoff spot { fx, fy } (bots use their role's spot); opts.speedMul scales run speed.
+  addPlayer(id, name, team, opts = {}) {
     const num = [...this.players.values()].filter((p) => p.team === team).length + 1;
     this.players.set(id, {
       id, name, team, num, idx: this.nextIdx++,
+      bot: !!opts.bot, spot: opts.spot || null, speedMul: opts.speedMul || 1,
       x: 0, y: 0, vx: 0, vy: 0, r: PLAYER.radius, m: PLAYER.mass,
       aimX: team === 0 ? 1 : -1, aimY: 0, aimAngle: team === 0 ? 0 : Math.PI,
       input: { mx: 0, my: 0, ax: 0, ay: 0, sh: false, lb: false, ps: 0, ds: 0, tk: 0 },
@@ -143,11 +145,18 @@ export class Match {
     for (const team of [0, 1]) {
       const side = team === 0 ? -1 : 1;
       const members = [...this.players.values()].filter((p) => p.team === team).sort((a, c) => a.num - c.num);
+      const spots = members.map((p, i) => p.spot || formation[i % formation.length]);
+      // Whoever starts closest to the centre takes the kickoff.
+      let taker = -1;
+      if (team === this.kickoffTeam) {
+        spots.forEach((s, i) => {
+          if (taker < 0 || s.fx < spots[taker].fx) taker = i;
+        });
+      }
       members.forEach((p, i) => {
-        const spot = formation[i % formation.length];
-        p.x = side * spot.fx * this.hw;
-        p.y = spot.fy * this.hh;
-        if (i === 0 && team === this.kickoffTeam) {
+        p.x = side * spots[i].fx * this.hw;
+        p.y = spots[i].fy * this.hh;
+        if (i === taker) {
           p.x = side * (BALL.radius + PLAYER.radius + 25);
           p.y = 0;
         }
@@ -349,7 +358,7 @@ export class Match {
 
     // Re-check: a dash or slide that started this tick must keep its burst speed.
     if (p.state === 'normal' || p.state === 'recover') {
-      let speed = PLAYER.maxSpeed;
+      let speed = PLAYER.maxSpeed * p.speedMul;
       if (p.effects.speed > 0) speed *= POWERUP.types.speed.speedMul;
       if (p.charging) speed *= PLAYER.chargingSpeedMul;
       if (p.state === 'recover') speed *= PLAYER.recoverSpeedMul;
@@ -869,7 +878,7 @@ export class Match {
 
   roster() {
     return [...this.players.values()].map((p) => ({
-      idx: p.idx, id: p.id, name: p.name, team: p.team, num: p.num,
+      idx: p.idx, id: p.id, name: p.name, team: p.team, num: p.num, bot: p.bot,
     }));
   }
 

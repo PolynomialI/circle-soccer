@@ -36,7 +36,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 14px;
   padding: 16px;
   overflow-y: auto;
@@ -176,3 +176,40 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
   z-index: 20;
   max-width: calc(100% - 32px);
 }
+
+/* Centre screens vertically, but let tall ones (the menu) scroll from the top. */
+.screen > :first-child { margin-top: auto; }
+.screen > :last-child { margin-bottom: auto; }
+
+.pick { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); flex: 1 1 140px; }
+.pick select { width: 100%; }
+
+.live { display: flex; align-items: center; gap: 8px; font-size: 18px; margin: 0 0 12px; }
+.live b { font-size: 26px; }
+.pulse { width: 10px; height: 10px; border-radius: 50%; background: #59e07a; animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(89, 224, 122, 0.6); } 100% { box-shadow: 0 0 0 10px rgba(89, 224, 122, 0); } }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.tile b { font-size: 22px; }
+.tile span { font-size: 12px; color: var(--muted); }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.swatch.online { background: var(--accent); }
+.swatch.rooms { background: var(--blue); }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; touch-action: none; }
+.chart-tip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  background: #0b1610;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  max-width: 100%;
+  text-align: center;
+  pointer-events: none;
+}
+@media (max-width: 600px) { .tiles { grid-template-columns: 1fr; } }

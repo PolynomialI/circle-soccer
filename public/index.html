@@ -41,8 +41,39 @@
         </div>
       </div>
 
+      <div class="card">
+        <h3>Practice</h3>
+        <div class="row">
+          <label class="pick">Bots
+            <select id="practice-format">
+              <option value="single">Singleplayer</option>
+              <option value="1v1" selected>1 v 1</option>
+              <option value="2v2">2 v 2</option>
+              <option value="3v3">3 v 3</option>
+              <option value="4v4">4 v 4</option>
+              <option value="5v5">5 v 5</option>
+              <option value="6v6">6 v 6</option>
+              <option value="7v7">7 v 7</option>
+              <option value="8v8">8 v 8</option>
+            </select>
+          </label>
+          <label class="pick">Difficulty
+            <select id="practice-level">
+              <option value="easy">Easy</option>
+              <option value="intermediate" selected>Intermediate</option>
+              <option value="hard">Hard</option>
+              <option value="barcelona">2011 Barcelona</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <button id="start-practice" class="primary">Start practice</button>
+        </div>
+      </div>
+
       <div class="row">
         <button class="ghost" id="open-settings">Settings</button>
+        <button class="ghost" id="open-history">Player History</button>
       </div>
       <p id="conn" class="muted">Connecting…</p>
     </section>
@@ -121,6 +152,25 @@
           <button id="reset-binds" class="ghost">Reset to defaults</button>
           <button id="close-settings" class="primary">Done</button>
         </div>
+      </div>
+    </section>
+
+    <section id="history" class="overlay modal hidden">
+      <div class="panel wide">
+        <h2>Player History</h2>
+        <p class="live"><span class="pulse"></span><b id="online-now">–</b><span><span id="online-word">players</span> online now</span></p>
+        <div class="tiles">
+          <div class="tile"><b id="h-peak">–</b><span>Peak this week</span></div>
+          <div class="tile"><b id="h-rooms-now">–</b><span>Private rooms open now</span></div>
+          <div class="tile"><b id="h-rooms-week">–</b><span>Private rooms created this week</span></div>
+        </div>
+        <div class="legend">
+          <span><i class="swatch online"></i>Players online</span>
+          <span><i class="swatch rooms"></i>Private rooms open</span>
+        </div>
+        <div id="history-chart" class="chart"></div>
+        <p id="history-note" class="muted hidden">History resets when the server restarts.</p>
+        <div class="row"><button id="close-history" class="primary">Close</button></div>
       </div>
     </section>
 

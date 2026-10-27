@@ -1,9 +1,12 @@
-import { MODES, QUICKPLAY_MODES, PRIVATE_MODES, DT, SNAPSHOT_EVERY } from './config.js';
+import { MODES, QUICKPLAY_MODES, PRIVATE_MODES, PRACTICE_FORMATS, DT, SNAPSHOT_EVERY } from './config.js';
 import { Match } from './match.js';
+import { buildPractice, BotSquad, BOT_LEVELS } from './bots.js';
+import { PlayerHistory } from './history.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const MAX_ROOM_MEMBERS = 16;
 const SPECTATOR = -1;
+const PRACTICE_LABELS = { easy: 'Easy', intermediate: 'Intermediate', hard: 'Hard', barcelona: '2011 Barcelona' };
 
 function cleanName(name) {
   const s = typeof name === 'string' ? name.replace(/[^\p{L}\p{N} _.\-!?]/gu, '').trim().slice(0, 16) : '';
@@ -12,11 +15,13 @@ function cleanName(name) {
 
 // Matchmaking queues, private rooms and the fixed-rate loop that drives every match.
 export class Lobby {
-  constructor(io) {
+  constructor(io, { history = new PlayerHistory() } = {}) {
     this.io = io;
+    this.history = history;
     this.clients = new Map(); // socket id -> { socket, name, room, queue }
     this.rooms = new Map(); // code -> room
     this.queues = Object.fromEntries(QUICKPLAY_MODES.map((m) => [m, []]));
+    this.statsTimer = null;
     io.on('connection', (socket) => this.onConnection(socket));
   }
 
@@ -33,23 +38,53 @@ export class Lobby {
         this.tick();
       }
     }, 4);
+    // Sample player counts regularly (changes also trigger a sample) and save once a minute.
+    this.sampleTimer = setInterval(() => this.history.record(this.stats()), 30 * 1000);
+    this.flushTimer = setInterval(() => this.history.flush().catch((e) => console.error('History save failed:', e.message)), 60 * 1000);
   }
 
   stop() {
     clearInterval(this.timer);
+    clearInterval(this.sampleTimer);
+    clearInterval(this.flushTimer);
+    clearTimeout(this.statsTimer);
+  }
+
+  stats() {
+    const s = { online: this.clients.size, quick: 0, priv: 0, privRooms: 0, practice: 0 };
+    for (const room of this.rooms.values()) {
+      if (room.practice) s.practice += room.members.size;
+      else if (room.isPrivate) {
+        s.priv += room.members.size;
+        s.privRooms++;
+      } else s.quick += room.members.size;
+    }
+    return s;
+  }
+
+  // Counts changed: record them and tell everyone (at most once a second).
+  statsChanged() {
+    if (this.statsTimer) return;
+    this.statsTimer = setTimeout(() => {
+      this.statsTimer = null;
+      const s = this.stats();
+      this.history.record(s);
+      this.io.emit('online', { online: s.online, privRooms: s.privRooms });
+    }, 1000);
   }
 
   tick() {
     for (const room of this.rooms.values()) {
       const match = room.match;
       if (!match) continue;
+      if (room.bots) room.bots.update();
       match.step();
       if (match.tick % SNAPSHOT_EVERY === 0) this.io.to(room.channel).volatile.emit('snap', match.snapshot());
       // Matches can also end outside step() (a forfeit), so announce on the first tick we see it.
       if (match.state === 'ended' && !match.endAnnounced) {
         match.endAnnounced = true;
         this.io.to(room.channel).emit('snap', match.snapshot());
-        this.io.to(room.channel).emit('matchEnd', { result: match.result, quick: !room.isPrivate });
+        this.io.to(room.channel).emit('matchEnd', { result: match.result, quick: !room.isPrivate, practice: room.practice || null });
       }
       if (match.done) this.finishMatch(room);
     }
@@ -59,6 +94,7 @@ export class Lobby {
     const client = { socket, name: cleanName(), room: null, queue: null };
     this.clients.set(socket.id, client);
     socket.emit('welcome', { id: socket.id, name: client.name });
+    this.statsChanged();
 
     socket.on('hello', (data) => {
       client.name = cleanName(data && data.name);
@@ -71,6 +107,12 @@ export class Lobby {
     socket.on('setTeam', (data) => this.setTeam(client, data && data.team));
     socket.on('setMode', (data) => this.setMode(client, data && data.mode));
     socket.on('startMatch', () => this.startPrivateMatch(client));
+    socket.on('startPractice', (data) => this.startPractice(client, data && data.format, data && data.level));
+    socket.on('history', (cb) => {
+      if (typeof cb !== 'function') return;
+      const s = this.stats();
+      cb({ ...this.history.snapshot(), live: { online: s.online, privRooms: s.privRooms } });
+    });
     socket.on('input', (msg) => {
       const room = client.room;
       if (room && room.match) room.match.handleInput(socket.id, msg);
@@ -82,6 +124,7 @@ export class Lobby {
       this.leaveQueue(client);
       this.leaveRoom(client);
       this.clients.delete(socket.id);
+      this.statsChanged();
     });
   }
 
@@ -140,7 +183,26 @@ export class Lobby {
     const room = this.makeRoom(mode, true);
     room.hostId = client.socket.id;
     this.addMember(room, client, 0);
+    this.history.roomCreated();
     this.broadcastRoom(room);
+  }
+
+  // ---- practice against bots -------------------------------------------------------
+
+  startPractice(client, format, level) {
+    if (!PRACTICE_FORMATS[format]) format = '1v1';
+    if (!BOT_LEVELS[level]) level = 'intermediate';
+    this.leaveQueue(client);
+    this.leaveRoom(client);
+    const setup = buildPractice({ format, level, humanId: client.socket.id, humanName: client.name });
+    const room = this.makeRoom(setup.mode, false);
+    room.practice = { format, level };
+    this.addMember(room, client, 0);
+    room.match = new Match({ mode: setup.mode, players: setup.players });
+    room.bots = new BotSquad(room.match, setup.bots);
+    const what = format === 'single' ? 'Singleplayer' : `${format} · ${PRACTICE_LABELS[level]}`;
+    const init = { ...room.match.initPayload(), label: `Practice · ${what}` };
+    client.socket.emit('matchStart', { init, roster: room.match.roster(), spectator: false });
   }
 
   joinPrivateRoom(client, code) {
@@ -237,6 +299,7 @@ export class Lobby {
     room.members.set(client.socket.id, { client, team });
     client.room = room;
     client.socket.join(room.channel);
+    this.statsChanged();
   }
 
   leaveRoom(client) {
@@ -245,6 +308,7 @@ export class Lobby {
     room.members.delete(client.socket.id);
     client.room = null;
     client.socket.leave(room.channel);
+    this.statsChanged();
     if (room.match) {
       room.match.removePlayer(client.socket.id);
       this.io.to(room.channel).emit('roster', room.match.roster());
@@ -272,6 +336,7 @@ export class Lobby {
 
   finishMatch(room) {
     room.match = null;
+    room.bots = null;
     if (room.isPrivate) {
       this.broadcastRoom(room);
       return;
@@ -282,6 +347,7 @@ export class Lobby {
       m.client.socket.leave(room.channel);
     }
     this.rooms.delete(room.code);
+    this.statsChanged();
   }
 
   broadcastRoom(room) {

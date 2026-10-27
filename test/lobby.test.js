@@ -158,3 +158,48 @@ test('host leaving hands the room to someone else', async () => {
   const r = await handed;
   assert.equal(r.members.length, 1);
 });
+
+test('practice starts a match against bots that move and play', async () => {
+  const s = await player('Solo');
+  const start = waitFor(s, 'matchStart');
+  s.emit('startPractice', { format: '2v2', level: 'hard' });
+  const { init, roster, spectator } = await start;
+  assert.equal(spectator, false);
+  assert.equal(init.mode, '2v2');
+  assert.equal(roster.length, 4);
+  assert.equal(roster.filter((r) => r.bot).length, 3);
+  assert.equal(roster.find((r) => r.id === s.id_).team, 0);
+  // After the countdown the bots should be running about.
+  await sleep(3300);
+  const a = await waitFor(s, 'snap');
+  await sleep(500);
+  const b = await waitFor(s, 'snap');
+  const botIdx = roster.filter((r) => r.bot).map((r) => r.idx);
+  const moved = botIdx.filter((i) => {
+    const pa = a.p.find((p) => p[0] === i);
+    const pb = b.p.find((p) => p[0] === i);
+    return Math.hypot(pb[1] - pa[1], pb[2] - pa[2]) > 5;
+  });
+  assert.ok(moved.length >= 2, `only ${moved.length} bots moved`);
+  // When it ends, the result carries the practice settings so "Play again" can restart it.
+  const room = [...server.lobby.rooms.values()].find((r) => r.members.has(s.id_));
+  room.match.score = [2, 1];
+  room.match.clock = 0.05;
+  const { practice } = await waitFor(s, 'matchEnd');
+  assert.deepEqual(practice, { format: '2v2', level: 'hard' });
+  s.emit('leaveRoom');
+});
+
+test('player history: live count and a week of buckets on request', async () => {
+  const s = await player('Watcher');
+  const live = waitFor(s, 'online');
+  const data = await new Promise((resolve) => s.emit('history', resolve));
+  assert.ok(data.live.online >= 1);
+  assert.equal(data.keepMs, 7 * 24 * 3600 * 1000);
+  assert.equal(data.persistent, false);
+  assert.ok(Array.isArray(data.buckets) && data.buckets.length >= 1, 'current bucket recorded');
+  const [, bucket] = data.buckets.at(-1);
+  assert.ok(bucket.o >= 1);
+  assert.ok(bucket.c >= 1, 'private rooms created earlier in this run are counted');
+  assert.ok((await live).online >= 1);
+});

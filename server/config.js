@@ -13,6 +13,19 @@ export const MODES = {
 export const QUICKPLAY_MODES = ['1v1', '2v2'];
 export const PRIVATE_MODES = ['1v1', '2v2', '3v3'];
 
+// Practice against bots. Bigger formats reuse the 3v3 pitch.
+export const PRACTICE_FORMATS = {
+  single: { mode: '1v1', size: 1, bots: false },
+  '1v1': { mode: '1v1', size: 1 },
+  '2v2': { mode: '2v2', size: 2 },
+  '3v3': { mode: '3v3', size: 3 },
+  '4v4': { mode: '3v3', size: 4 },
+  '5v5': { mode: '3v3', size: 5 },
+  '6v6': { mode: '3v3', size: 6 },
+  '7v7': { mode: '3v3', size: 7 },
+  '8v8': { mode: '3v3', size: 8 },
+};
+
 // Kickoff spots per team size, as fractions of the half-pitch measured from the centre.
 export const FORMATIONS = {
   1: [{ fx: 0.45, fy: 0 }],

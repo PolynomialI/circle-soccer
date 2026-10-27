@@ -6,3 +6,14 @@ services:
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
+    envVars:
+      # Where the week of player history is saved, so it survives restarts and sleeping.
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: circle-soccer-history
+          property: connectionString
+  - type: keyvalue
+    name: circle-soccer-history
+    plan: free
+    ipAllowList: [] # only reachable from your own Render services

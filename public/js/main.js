@@ -2,6 +2,7 @@ import { loadSettings, saveSettings, resetBinds, bindKey, keyLabel, ACTIONS } fr
 import { Input } from './input.js';
 import { Sound } from './audio.js';
 import { Renderer, TEAMS } from './render.js';
+import { renderHistory, weekSeries } from './history.js';
 
 const INTERP_DELAY = 0.08; // seconds we render behind the newest snapshot, hides network jitter
 const TEAM_SIZE = { '1v1': 1, '2v2': 2, '3v3': 3 };
@@ -34,7 +35,7 @@ function showScreen(name) {
 }
 
 function overlayOpen() {
-  return ['pause', 'settings'].some((id) => !$(id).classList.contains('hidden'));
+  return ['pause', 'settings', 'history'].some((id) => !$(id).classList.contains('hidden'));
 }
 
 function setOverlay(id, open) {
@@ -99,6 +100,20 @@ const joinByCode = () => {
 $('join-room').addEventListener('click', joinByCode);
 $('join-code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') joinByCode();
+});
+
+// ---- practice against bots ----------------------------------------------------------
+
+function startPractice(practice) {
+  socket.emit('startPractice', practice);
+}
+const syncPracticeLevel = () => {
+  $('practice-level').disabled = $('practice-format').value === 'single';
+};
+$('practice-format').addEventListener('change', syncPracticeLevel);
+syncPracticeLevel();
+$('start-practice').addEventListener('click', () => {
+  startPractice({ format: $('practice-format').value, level: $('practice-level').value });
 });
 
 // ---- private room lobby ------------------------------------------------------------
@@ -232,7 +247,7 @@ function buildView(m, dt) {
   return view;
 }
 
-function showResult({ result, quick }) {
+function showResult({ result, quick, practice }) {
   const m = app.match;
   const myTeam = m ? m.myTeam : -1;
   const w = result.winner;
@@ -273,7 +288,14 @@ function showResult({ result, quick }) {
     b.addEventListener('click', onClick);
     actions.appendChild(b);
   };
-  if (quick) {
+  if (practice) {
+    button('Play again', true, () => {
+      $('result').classList.add('hidden');
+      app.match = null;
+      startPractice(practice);
+    });
+    button('Main menu', false, leaveToMenu);
+  } else if (quick) {
     button('Play again', true, () => {
       $('result').classList.add('hidden');
       app.match = null;
@@ -354,6 +376,29 @@ socket.on('snap', (snap) => {
 
 socket.on('matchEnd', showResult);
 
+// ---- player history -----------------------------------------------------------------
+
+function setLive({ online, privRooms }) {
+  $('online-now').textContent = online;
+  $('online-word').textContent = online === 1 ? 'player' : 'players';
+  $('h-rooms-now').textContent = privRooms;
+}
+
+socket.on('online', setLive);
+
+$('open-history').addEventListener('click', () => {
+  setOverlay('history', true);
+  socket.emit('history', (data) => {
+    const points = weekSeries(data);
+    setLive(data.live);
+    $('h-peak').textContent = Math.max(data.live.online, ...points.map((p) => p.o));
+    $('h-rooms-week').textContent = points.reduce((n, p) => n + p.c, 0);
+    $('history-note').classList.toggle('hidden', data.persistent);
+    renderHistory($('history-chart'), points);
+  });
+});
+$('close-history').addEventListener('click', () => setOverlay('history', false));
+
 setInterval(() => {
   if (!socket.connected) return;
   const t0 = performance.now();
@@ -429,6 +474,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Escape' || app.listening) return;
   if (!$('settings').classList.contains('hidden')) setOverlay('settings', false);
+  else if (!$('history').classList.contains('hidden')) setOverlay('history', false);
   else if (app.screen === 'game' && $('result').classList.contains('hidden')) {
     setOverlay('pause', $('pause').classList.contains('hidden'));
   }

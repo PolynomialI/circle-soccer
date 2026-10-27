@@ -592,7 +592,7 @@ export class Renderer {
     ctx.font = '600 12px system-ui, sans-serif';
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.textAlign = 'left';
-    ctx.fillText(`${this.init.mode}${info.spectator ? ' · spectating' : ''}`, 14, 22);
+    ctx.fillText(`${this.init.label || this.init.mode}${info.spectator ? ' · spectating' : ''}`, 14, 22);
     ctx.textAlign = 'right';
     if (info.ping !== null) ctx.fillText(`${info.ping} ms`, this.w - 14, 22);
 
